@@ -616,7 +616,12 @@ function TrackRow({
         {/* 音源未読み込み時のオーバーレイボタン */}
         {!track.audioBuffer && !track.isAnalyzing && (
           <button
-            onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              // iOS: タップの同期コンテキストでAudioContextをアンロック
+              audioEngine.unlockContext();
+              fileRef.current?.click();
+            }}
             style={{
               position: "absolute",
               inset: 0,

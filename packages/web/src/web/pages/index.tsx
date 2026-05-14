@@ -31,6 +31,8 @@ export default function GROOVAApp() {
       audioEngine.stop();
       setIsPlaying(false);
     } else {
+      // iOS: 同期タップコンテキストで即アンロック、その後async resume
+      audioEngine.unlockContext();
       await audioEngine.resumeContext();
       audioEngine.play(playheadTime);
       setIsPlaying(true);

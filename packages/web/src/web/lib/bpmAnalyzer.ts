@@ -170,7 +170,10 @@ export async function decodeAudioFile(
   ctx: AudioContext
 ): Promise<AudioBuffer> {
   const arrayBuffer = await file.arrayBuffer();
-  return ctx.decodeAudioData(arrayBuffer);
+  // iOS SafariはPromise形式のdecodeAudioDataをサポートしない場合があるのでコールバック形式を使う
+  return new Promise((resolve, reject) => {
+    ctx.decodeAudioData(arrayBuffer, resolve, reject);
+  });
 }
 
 /**
