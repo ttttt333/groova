@@ -577,27 +577,72 @@ function TrackRow({
         />
       </div>
 
-      {/* Canvas */}
-      <canvas
-        ref={(el) => {
-          if (el) {
-            canvasRefs.current.set(track.id, el);
-            el.width = totalWidth - LABEL_WIDTH;
-            el.height = TRACK_HEIGHT;
-          }
-        }}
-        style={{
-          flex: 1,
-          display: "block",
-          touchAction: "none",
-          cursor: track.audioBuffer ? "grab" : "default",
-        }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
-      />
+      {/* Canvas area */}
+      <div style={{ flex: 1, position: "relative" }}>
+        <canvas
+          ref={(el) => {
+            if (el) {
+              canvasRefs.current.set(track.id, el);
+              el.width = totalWidth - LABEL_WIDTH;
+              el.height = TRACK_HEIGHT;
+            }
+          }}
+          style={{
+            width: "100%",
+            height: "100%",
+            display: "block",
+            touchAction: "none",
+            cursor: track.audioBuffer ? "grab" : "default",
+          }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={onDrop}
+        />
+        {/* 音源未読み込み時のオーバーレイボタン */}
+        {!track.audioBuffer && !track.isAnalyzing && (
+          <button
+            onClick={() => fileRef.current?.click()}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              paddingLeft: 16,
+              gap: 6,
+              color: "#3a3a52",
+            }}
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }}>＋</span>
+            <span style={{ fontSize: 12, letterSpacing: "0.02em" }}>音源を読み込む</span>
+          </button>
+        )}
+        {/* 解析中表示 */}
+        {track.isAnalyzing && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              paddingLeft: 16,
+              gap: 8,
+              color: track.color,
+              fontSize: 12,
+            }}
+          >
+            <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
+            解析中…
+          </div>
+        )}
+      </div>
     </div>
   );
 }
