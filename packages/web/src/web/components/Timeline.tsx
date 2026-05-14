@@ -149,8 +149,21 @@ export default function Timeline() {
         ctx.fillStyle = grad;
         ctx.fillRect(scanX - 40, 0, 80, H);
       }
+
+      // Playhead line (always drawn on top)
+      const phX = playheadTime * pxPerSec;
+      if (phX >= 0 && phX <= W) {
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(phX, 0);
+        ctx.lineTo(phX, H);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     },
-    [trackOffsets, pxPerSec]
+    [trackOffsets, pxPerSec, playheadTime]
   );
 
   // Draw ruler
@@ -593,6 +606,8 @@ function TrackRow({
             display: "block",
             touchAction: "none",
             cursor: track.audioBuffer ? "grab" : "default",
+            // 空トラック時はcanvasをクリックイベントの対象外にする
+            pointerEvents: track.audioBuffer ? "auto" : "none",
           }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -603,7 +618,7 @@ function TrackRow({
         {/* 音源未読み込み時のオーバーレイボタン */}
         {!track.audioBuffer && !track.isAnalyzing && (
           <button
-            onClick={() => fileRef.current?.click()}
+            onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
             style={{
               position: "absolute",
               inset: 0,
@@ -616,11 +631,17 @@ function TrackRow({
               alignItems: "center",
               justifyContent: "flex-start",
               paddingLeft: 16,
-              gap: 6,
-              color: "#3a3a52",
+              gap: 8,
+              color: "#4a4a6a",
+              zIndex: 2,
             }}
           >
-            <span style={{ fontSize: 18, lineHeight: 1 }}>＋</span>
+            <span style={{
+              width: 28, height: 28, borderRadius: "50%",
+              border: "1.5px dashed #3a3a5a",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 18, lineHeight: 1, color: "#5a5a7a", flexShrink: 0,
+            }}>+</span>
             <span style={{ fontSize: 12, letterSpacing: "0.02em" }}>音源を読み込む</span>
           </button>
         )}
