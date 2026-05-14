@@ -26,15 +26,15 @@ export default function GROOVAApp() {
   const [sheet, setSheet] = useState<BottomSheet>(null);
   const [syncFlash, setSyncFlash] = useState(false);
 
-  const handlePlay = async () => {
+  const handlePlay = () => {
     if (isPlaying) {
       audioEngine.stop();
       setIsPlaying(false);
     } else {
-      // iOS: 同期タップコンテキストで即アンロック、その後async resume
-      audioEngine.unlockContext();
-      await audioEngine.resumeContext();
-      audioEngine.play(playheadTime);
+      // iOS: async禁止。タップの同期コンテキストのまま全処理を実行する。
+      // awaitを使うとiOSがユーザータップとみなさなくなりAudioContextがアンロックされない。
+      audioEngine.unlockContext(); // 同期: suspend解除 + 無音バッファ再生
+      audioEngine.play(playheadTime); // play()内部でsuspended対応済み
       setIsPlaying(true);
     }
   };

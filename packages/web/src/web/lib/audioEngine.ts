@@ -40,20 +40,21 @@ class AudioEngine {
 
   /**
    * iOS Safari対応: ユーザータップの同期コンテキストで呼ぶことで
-   * AudioContextをアンロックする。無音バッファ再生でiOSのブロックを解除。
+   * AudioContextをアンロックする。
+   * CRITICAL: この関数はasync/awaitを使わない。awaitするとiOSのタップ同期コンテキストが切れる。
    */
   unlockContext(): void {
     const ctx = this.getContext();
-    if (ctx.state === "suspended") {
-      ctx.resume().catch(() => {});
-    }
-    // iOS Safari用: 無音バッファを即時再生してアンロック
+    // resume()を先に呼ぶ（Promiseは無視、同期的に状態変化が始まる）
+    ctx.resume().catch(() => {});
+    // iOS Safari用: 無音バッファを即時再生してアンロック（state問わず毎回実行）
     try {
-      const buf = ctx.createBuffer(1, 1, 22050);
+      const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
       const src = ctx.createBufferSource();
       src.buffer = buf;
       src.connect(ctx.destination);
       src.start(0);
+      src.onended = () => { src.disconnect(); };
     } catch {}
   }
 
@@ -81,6 +82,10 @@ class AudioEngine {
     const ctx = this.getContext();
     const store = useGROOVA.getState();
 
+    // デバッグ: Context状態とトラック数を確認
+    console.log("[GROOVA] play() ctx.state=", ctx.state, "tracks=", store.tracks.length,
+      "withAudio=", store.tracks.filter(t => t.audioBuffer).length);
+
     this.stop();
 
     const startPlayback = () => {
@@ -88,6 +93,7 @@ class AudioEngine {
       this.offsetAt = offsetSeconds;
 
       store.tracks.forEach((track) => {
+        console.log("[GROOVA] track", track.id, "audioBuffer=", !!track.audioBuffer, "muted=", track.muted);
         if (!track.audioBuffer || track.muted) return;
         if (store.soloedTrack && store.soloedTrack !== track.id) return;
 
