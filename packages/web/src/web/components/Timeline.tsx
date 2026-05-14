@@ -592,10 +592,13 @@ function TrackRow({
       <div style={{ flex: 1, position: "relative" }}>
         <canvas
           ref={(el) => {
-            if (el) {
+            if (el && !canvasRefs.current.get(track.id)) {
+              // 初回マウント時のみサイズ設定（再レンダリング時に消えないよう）
               canvasRefs.current.set(track.id, el);
               el.width = totalWidth - LABEL_WIDTH;
               el.height = TRACK_HEIGHT;
+            } else if (el) {
+              canvasRefs.current.set(track.id, el);
             }
           }}
           style={{
