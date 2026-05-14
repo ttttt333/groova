@@ -329,7 +329,9 @@ export default function Timeline() {
   const loadFile = async (file: File, trackId: string) => {
     updateTrack(trackId, { file, isAnalyzing: true, bpm: null, waveformData: null });
     try {
-      const ctx = audioEngine.getContext();
+      // ensureRunning()でsuspendedでもresumeを試みる
+      // ファイル選択前のタップでunlockContext()が呼ばれていればrunningになっているはず
+      const ctx = await audioEngine.ensureRunning();
       const audioBuffer = await decodeAudioFile(file, ctx);
       // duration × 80px/sec × zoomLevel ≒ 実際のcanvasピクセル幅、余裕を持って8000サンプル
       const waveformData = extractWaveform(audioBuffer, 8000);
@@ -565,7 +567,10 @@ function TrackRow({
         </button>
         {/* File picker */}
         <button
-          onClick={() => fileRef.current?.click()}
+          onClick={() => {
+            audioEngine.unlockContext();
+            fileRef.current?.click();
+          }}
           style={{
             fontSize: 14,
             background: "none",

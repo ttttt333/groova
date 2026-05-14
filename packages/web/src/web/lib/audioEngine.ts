@@ -29,6 +29,16 @@ class AudioEngine {
   }
 
   /**
+   * 非同期処理内でContextを取得する場合に使う。
+   * すでにContextが存在すればそのまま返す（新規作成しない）。
+   * 存在しない場合はgetContext()で作成する（suspended状態になるが
+   * unlockContext()が事前に呼ばれていれば問題ない）。
+   */
+  getExistingContext(): AudioContext {
+    return this.getContext();
+  }
+
+  /**
    * iOS Safari対応: ユーザータップの同期コンテキストで呼ぶことで
    * AudioContextをアンロックする。無音バッファ再生でiOSのブロックを解除。
    */
@@ -51,6 +61,18 @@ class AudioEngine {
     const ctx = this.getContext();
     if (ctx.state === "suspended") {
       await ctx.resume();
+    }
+    return ctx;
+  }
+
+  /**
+   * 非同期処理の中でContextが確実にrunning状態になるまで待つ。
+   * タップ外から呼んでもOK（suspendedのままの場合はresumeを試みる）。
+   */
+  async ensureRunning(): Promise<AudioContext> {
+    const ctx = this.getContext();
+    if (ctx.state !== "running") {
+      try { await ctx.resume(); } catch {}
     }
     return ctx;
   }
