@@ -178,9 +178,11 @@ export async function decodeAudioFile(
  */
 export function extractWaveform(
   audioBuffer: AudioBuffer,
-  numSamples = 1000
+  numSamples = 4000
 ): Float32Array {
   const channelData = audioBuffer.getChannelData(0);
+  // ステレオあれば両ch合成
+  const ch2 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
   const blockSize = Math.floor(channelData.length / numSamples);
   const waveform = new Float32Array(numSamples);
 
@@ -188,7 +190,9 @@ export function extractWaveform(
     let max = 0;
     const start = i * blockSize;
     for (let j = start; j < start + blockSize && j < channelData.length; j++) {
-      const abs = Math.abs(channelData[j]);
+      const abs = ch2
+        ? Math.max(Math.abs(channelData[j]), Math.abs(ch2[j]))
+        : Math.abs(channelData[j]);
       if (abs > max) max = abs;
     }
     waveform[i] = max;

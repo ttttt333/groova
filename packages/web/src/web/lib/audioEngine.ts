@@ -42,40 +42,51 @@ class AudioEngine {
 
     this.stop();
 
-    this.startedAt = ctx.currentTime;
-    this.offsetAt = offsetSeconds;
+    // iOSはユーザー操作後でも suspended になることがある
+    const startPlayback = () => {
+      this.startedAt = ctx.currentTime;
+      this.offsetAt = offsetSeconds;
 
-    store.tracks.forEach((track) => {
-      if (!track.audioBuffer || track.muted) return;
+      store.tracks.forEach((track) => {
+        if (!track.audioBuffer || track.muted) return;
+        if (store.soloedTrack && store.soloedTrack !== track.id) return;
 
-      // Solo logic
-      if (store.soloedTrack && store.soloedTrack !== track.id) return;
+        const source = ctx.createBufferSource();
+        source.buffer = track.audioBuffer;
+        source.playbackRate.value = track.speed ?? 1;
+        source.loop = false;
 
-      const source = ctx.createBufferSource();
-      source.buffer = track.audioBuffer;
-      source.playbackRate.value = track.speed;
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = track.volume ?? 1;
 
-      const gainNode = ctx.createGain();
-      gainNode.gain.value = track.volume;
+        source.connect(gainNode);
+        gainNode.connect(this.masterGain!);
 
-      source.connect(gainNode);
-      gainNode.connect(this.masterGain!);
+        const trimStart = track.trimStart ?? 0;
+        const bufDuration = track.audioBuffer.duration;
+        const trimEnd = track.trimEnd ?? bufDuration;
+        const clipDuration = trimEnd - trimStart;
 
-      const trimStart = track.trimStart || 0;
-      const duration = track.trimEnd
-        ? track.trimEnd - trimStart
-        : track.audioBuffer.duration - trimStart;
+        // offsetSeconds がトラックの範囲内か確認
+        if (offsetSeconds <= trimEnd) {
+          const playFrom = Math.max(0, offsetSeconds - trimStart);
+          const remaining = clipDuration - playFrom;
+          if (remaining > 0.01) {
+            source.start(ctx.currentTime, trimStart + playFrom, remaining);
+          }
+        }
 
-      const startOffset = Math.max(0, offsetSeconds - trimStart) / track.speed;
+        this.activeNodes.set(track.id, { source, gainNode });
+      });
 
-      if (startOffset < duration / track.speed) {
-        source.start(0, trimStart + startOffset * track.speed, duration - startOffset * track.speed);
-      }
+      this.startAnimLoop();
+    };
 
-      this.activeNodes.set(track.id, { source, gainNode });
-    });
-
-    this.startAnimLoop();
+    if (ctx.state === "suspended") {
+      ctx.resume().then(startPlayback);
+    } else {
+      startPlayback();
+    }
   }
 
   stop() {

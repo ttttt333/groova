@@ -226,11 +226,26 @@ export default function Timeline() {
     [pxPerSec, maxDuration, showGrid, masterBpm]
   );
 
-  // Animation loop
+  // Resize canvases (サイズ変更はrAFと分離して先にやる)
   useEffect(() => {
-    const rulerCanvas = document.getElementById("groova-ruler") as HTMLCanvasElement;
+    tracks.forEach((t) => {
+      const canvas = canvasRefs.current.get(t.id);
+      if (canvas) {
+        if (canvas.width !== totalWidth - LABEL_WIDTH) canvas.width = totalWidth - LABEL_WIDTH;
+        if (canvas.height !== TRACK_HEIGHT) canvas.height = TRACK_HEIGHT;
+      }
+    });
+    const ruler = document.getElementById("groova-ruler") as HTMLCanvasElement;
+    if (ruler) {
+      if (ruler.width !== totalWidth - LABEL_WIDTH) ruler.width = totalWidth - LABEL_WIDTH;
+      if (ruler.height !== RULER_HEIGHT) ruler.height = RULER_HEIGHT;
+    }
+  }, [tracks.length, totalWidth, zoomLevel]);
 
+  // Animation loop — 常時rAFで再描画
+  useEffect(() => {
     const loop = () => {
+      const rulerCanvas = document.getElementById("groova-ruler") as HTMLCanvasElement;
       tracks.forEach((t) => drawTrack(t));
       if (rulerCanvas) drawRuler(rulerCanvas);
       animRef.current = requestAnimationFrame(loop);
@@ -238,24 +253,6 @@ export default function Timeline() {
     animRef.current = requestAnimationFrame(loop);
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
   }, [tracks, drawTrack, drawRuler]);
-
-  // Resize canvases when zoom/tracks change
-  useEffect(() => {
-    const scroll = scrollRef.current;
-    if (!scroll) return;
-    tracks.forEach((t) => {
-      const canvas = canvasRefs.current.get(t.id);
-      if (canvas) {
-        canvas.width = totalWidth - LABEL_WIDTH;
-        canvas.height = TRACK_HEIGHT;
-      }
-    });
-    const ruler = document.getElementById("groova-ruler") as HTMLCanvasElement;
-    if (ruler) {
-      ruler.width = totalWidth - LABEL_WIDTH;
-      ruler.height = RULER_HEIGHT;
-    }
-  }, [tracks.length, totalWidth, zoomLevel]);
 
   // Playhead position
   const playheadX = LABEL_WIDTH + playheadTime * pxPerSec;
@@ -334,7 +331,8 @@ export default function Timeline() {
     try {
       const ctx = audioEngine.getContext();
       const audioBuffer = await decodeAudioFile(file, ctx);
-      const waveformData = extractWaveform(audioBuffer, 1200);
+      // duration × 80px/sec × zoomLevel ≒ 実際のcanvasピクセル幅、余裕を持って8000サンプル
+      const waveformData = extractWaveform(audioBuffer, 8000);
       updateTrack(trackId, { audioBuffer, waveformData });
       const result = await analyzeBPM(audioBuffer);
       updateTrack(trackId, {
