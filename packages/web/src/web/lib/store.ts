@@ -159,7 +159,7 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
       return { tracks: arr };
     }),
 
-  setZoom: (z) => set({ zoomLevel: Math.min(8, Math.max(0.5, z)) }),
+  setZoom: (z) => set({ zoomLevel: Math.min(64, Math.max(0.25, z)) }),
   setSnapToGrid: (v) => set({ snapToGrid: v }),
   setShowGrid: (v) => set({ showGrid: v }),
   setActiveTab: (t) => set({ activeTab: t }),

@@ -178,21 +178,24 @@ export async function decodeAudioFile(
 
 /**
  * Extract waveform data for display
+ * 高解像度: サンプル数を多く取り、高ズームでもなめらかに
  */
 export function extractWaveform(
   audioBuffer: AudioBuffer,
   numSamples = 4000
 ): Float32Array {
   const channelData = audioBuffer.getChannelData(0);
-  // ステレオあれば両ch合成
   const ch2 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
-  const blockSize = Math.floor(channelData.length / numSamples);
-  const waveform = new Float32Array(numSamples);
+  // 最低でもサンプルレート/10のサンプル数を確保（1秒あたり ~4410点）
+  const actual = Math.min(numSamples, channelData.length);
+  const blockSize = Math.max(1, Math.floor(channelData.length / actual));
+  const waveform = new Float32Array(actual);
 
-  for (let i = 0; i < numSamples; i++) {
+  for (let i = 0; i < actual; i++) {
     let max = 0;
     const start = i * blockSize;
-    for (let j = start; j < start + blockSize && j < channelData.length; j++) {
+    const end = Math.min(start + blockSize, channelData.length);
+    for (let j = start; j < end; j++) {
       const abs = ch2
         ? Math.max(Math.abs(channelData[j]), Math.abs(ch2[j]))
         : Math.abs(channelData[j]);

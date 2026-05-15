@@ -166,16 +166,70 @@ export default function Timeline() {
         ctx.roundRect(clipX, 2, clipW, H - 4, 4);
         ctx.stroke();
 
-        // Waveform bars
-        const barCount = Math.floor(clipW);
-        const samplesPerBar = waveform.length / barCount;
-        for (let i = 0; i < barCount; i++) {
-          const sampleIdx = Math.floor(i * samplesPerBar);
-          const amp = waveform[Math.min(sampleIdx, waveform.length - 1)];
-          const barH = amp * (H - 8) * 0.85;
-          const x = clipX + i;
-          ctx.fillStyle = track.color + "cc";
-          ctx.fillRect(x, (H - barH) / 2, 1, barH);
+        // Waveform drawing — ズームレベルに応じた高品質描画
+        const samplesPerPx = waveform.length / clipW;
+
+        if (samplesPerPx > 1) {
+          // 縮小表示: min/max エンベロープ描画（ピークが潰れない）
+          ctx.beginPath();
+          const midY = H / 2;
+          const ampScale = (H - 8) * 0.42;
+          // 上側（max）
+          for (let px = 0; px < clipW; px++) {
+            const sStart = Math.floor(px * samplesPerPx);
+            const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
+            let max = 0;
+            for (let s = sStart; s < sEnd; s++) {
+              if (waveform[s] > max) max = waveform[s];
+            }
+            const y = midY - max * ampScale;
+            if (px === 0) ctx.moveTo(clipX + px, y);
+            else ctx.lineTo(clipX + px, y);
+          }
+          // 下側（反転）
+          for (let px = Math.floor(clipW) - 1; px >= 0; px--) {
+            const sStart = Math.floor(px * samplesPerPx);
+            const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
+            let max = 0;
+            for (let s = sStart; s < sEnd; s++) {
+              if (waveform[s] > max) max = waveform[s];
+            }
+            const y = midY + max * ampScale;
+            ctx.lineTo(clipX + px, y);
+          }
+          ctx.closePath();
+          ctx.fillStyle = track.color + "bb";
+          ctx.fill();
+          // 輪郭線
+          ctx.strokeStyle = track.color;
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        } else {
+          // 拡大表示: 個別サンプルをバーで描画（DaVinci Resolve風）
+          const pxPerSample = clipW / waveform.length;
+          const barW = Math.max(1, pxPerSample - (pxPerSample > 3 ? 1 : 0));
+          // 描画範囲を可視領域に絞る（パフォーマンス）
+          const scrollLeft = scrollRef.current?.scrollLeft || 0;
+          const viewWidth = scrollRef.current?.clientWidth || clipW;
+          const visStart = Math.max(0, Math.floor(((scrollLeft - clipX) / clipW) * waveform.length) - 2);
+          const visEnd = Math.min(waveform.length, Math.ceil(((scrollLeft + viewWidth - clipX) / clipW) * waveform.length) + 2);
+
+          ctx.fillStyle = track.color + "dd";
+          const midY = H / 2;
+          const ampScale = (H - 8) * 0.42;
+          for (let i = visStart; i < visEnd; i++) {
+            const amp = waveform[i];
+            const barH = amp * ampScale * 2;
+            const x = clipX + i * pxPerSample;
+            ctx.fillRect(x, midY - barH / 2, barW, barH);
+          }
+          // 中央線
+          ctx.strokeStyle = track.color + "44";
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.moveTo(clipX, midY);
+          ctx.lineTo(clipX + clipW, midY);
+          ctx.stroke();
         }
 
         // Track name label inside clip
@@ -417,7 +471,7 @@ export default function Timeline() {
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
       const ratio = dist / pinchRef.current.dist;
-      const newZoom = Math.max(0.5, Math.min(8, pinchRef.current.zoom * ratio));
+      const newZoom = Math.max(0.25, Math.min(64, pinchRef.current.zoom * ratio));
       useGROOVA.getState().setZoom(newZoom);
     }
   };
@@ -437,8 +491,9 @@ export default function Timeline() {
       // ファイル選択前のタップでunlockContext()が呼ばれていればrunningになっているはず
       const ctx = await audioEngine.ensureRunning();
       const audioBuffer = await decodeAudioFile(file, ctx);
-      // duration × 80px/sec × zoomLevel ≒ 実際のcanvasピクセル幅、余裕を持って8000サンプル
-      const waveformData = extractWaveform(audioBuffer, 8000);
+      // 高解像度波形: sampleRate/4 で最大ズームでもなめらか
+      const waveformSamples = Math.min(audioBuffer.length, Math.max(50000, Math.ceil(audioBuffer.sampleRate * audioBuffer.duration / 4)));
+      const waveformData = extractWaveform(audioBuffer, waveformSamples);
       updateTrack(trackId, { audioBuffer, waveformData });
       const result = await analyzeBPM(audioBuffer);
       updateTrack(trackId, {

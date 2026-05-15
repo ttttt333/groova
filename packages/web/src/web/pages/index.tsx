@@ -196,16 +196,23 @@ export default function GROOVAApp() {
             </button>
             {/* Zoom */}
             <button
-              onClick={() => setZoom(Math.max(0.5, zoomLevel - 0.5))}
+              onClick={() => {
+                // 適応的ステップ: 低ズームで細かく、高ズームで大きく
+                const step = zoomLevel <= 1 ? 0.25 : zoomLevel <= 4 ? 0.5 : zoomLevel <= 16 ? 2 : 4;
+                setZoom(Math.max(0.25, zoomLevel - step));
+              }}
               style={{ padding: 5, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: 6, color: "#9999aa", cursor: "pointer" }}
             >
               <ZoomOut size={13} />
             </button>
-            <span style={{ fontSize: 10, color: "#4a4a5a", minWidth: 30, textAlign: "center", fontFamily: "JetBrains Mono" }}>
-              {zoomLevel.toFixed(1)}×
+            <span style={{ fontSize: 10, color: "#4a4a5a", minWidth: 36, textAlign: "center", fontFamily: "JetBrains Mono" }}>
+              {zoomLevel < 10 ? zoomLevel.toFixed(1) : Math.round(zoomLevel)}×
             </span>
             <button
-              onClick={() => setZoom(Math.min(8, zoomLevel + 0.5))}
+              onClick={() => {
+                const step = zoomLevel < 1 ? 0.25 : zoomLevel < 4 ? 0.5 : zoomLevel < 16 ? 2 : 4;
+                setZoom(Math.min(64, zoomLevel + step));
+              }}
               style={{ padding: 5, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: 6, color: "#9999aa", cursor: "pointer" }}
             >
               <ZoomIn size={13} />
