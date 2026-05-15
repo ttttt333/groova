@@ -367,6 +367,7 @@ export default function Timeline() {
 
   // ── rAF loop: プレイヘッドDOM更新 + オートスクロール + 必要時のみ波形描画 ──
   useEffect(() => {
+    let lastStoreWrite = 0;
     const loop = () => {
       // ① プレイヘッド位置を audioEngine から直接取得（storeを経由しない）
       const phTime = audioEngine.getCurrentTime();
@@ -376,6 +377,13 @@ export default function Timeline() {
       if (playheadLineRef.current) {
         const x = phTime * pxPerSecRef.current;
         playheadLineRef.current.style.transform = `translateX(${x}px)`;
+      }
+
+      // ② store.setPlayheadTime は250ms間隔で間引き（ExportPanelなど向け）
+      const now = performance.now();
+      if (now - lastStoreWrite > 250) {
+        setPlayheadTime(phTime);
+        lastStoreWrite = now;
       }
 
       // ③ 解析中トラックがあれば波形フラグを立てる

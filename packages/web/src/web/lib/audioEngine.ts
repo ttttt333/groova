@@ -170,12 +170,8 @@ class AudioEngine {
   }
 
   private startAnimLoop(): void {
-    const tick = () => {
-      const t = this.getCurrentTime();
-      useGROOVA.getState().setPlayheadTime(t);
-      this.animFrame = requestAnimationFrame(tick);
-    };
-    this.animFrame = requestAnimationFrame(tick);
+    // Timeline.tsx の rAF ループが getCurrentTime() を直接読むため、ここでは不要
+    // (二重rAF + store書き込みによる全体再レンダリングを避ける)
   }
 
   async exportWAV(sampleRate = 44100, bitDepth = 16): Promise<Blob> {

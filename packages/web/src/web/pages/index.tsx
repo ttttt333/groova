@@ -35,9 +35,27 @@ function useIsLandscape() {
 export default function GROOVAApp() {
   const {
     isPlaying, setIsPlaying, masterBpm, zoomLevel, setZoom,
-    playheadTime, setPlayheadTime, tracks, showGrid, setShowGrid,
+    setPlayheadTime, tracks, showGrid, setShowGrid,
     syncAllToBpm, resetScroll,
   } = useGROOVA();
+
+  // playheadTime は store から subscribe しない — DOM直接更新で60fps再レンダリングを回避
+  const playheadTimeRef = useRef(0);
+  const timeDisplayRefs = useRef<(HTMLSpanElement | null)[]>([]);
+
+  // audioEngine から rAF で直接読んで表示だけ更新
+  useEffect(() => {
+    let rafId: number;
+    const tick = () => {
+      const t = audioEngine.getCurrentTime();
+      playheadTimeRef.current = t;
+      const str = formatTime(t);
+      timeDisplayRefs.current.forEach((el) => { if (el) el.textContent = str; });
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
 
   const [sheet, setSheet] = useState<BottomSheet>(null);
   const [syncFlash, setSyncFlash] = useState(false);
@@ -54,7 +72,7 @@ export default function GROOVAApp() {
       setIsPlaying(false);
     } else {
       audioEngine.unlockContext();
-      audioEngine.play(playheadTime);
+      audioEngine.play(playheadTimeRef.current);
       setIsPlaying(true);
     }
   };
@@ -222,12 +240,15 @@ export default function GROOVAApp() {
           </motion.button>
 
           {/* 時間 */}
-          <span style={{
-            fontFamily: "JetBrains Mono, monospace",
-            fontSize: 12, color: "#a8ff3e", fontWeight: 700,
-            minWidth: 72, flexShrink: 0,
-          }}>
-            {formatTime(playheadTime)}
+          <span
+            ref={(el) => { timeDisplayRefs.current[0] = el; }}
+            style={{
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: 12, color: "#a8ff3e", fontWeight: 700,
+              minWidth: 72, flexShrink: 0,
+            }}
+          >
+            0:00.0
           </span>
 
           {/* spacer */}
@@ -330,11 +351,14 @@ export default function GROOVAApp() {
           >
             {/* 時間 + ズーム */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{
-                fontFamily: "JetBrains Mono, monospace",
-                fontSize: 13, color: "#a8ff3e", fontWeight: 700,
-              }}>
-                {formatTime(playheadTime)}
+              <span
+                ref={(el) => { timeDisplayRefs.current[1] = el; }}
+                style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 13, color: "#a8ff3e", fontWeight: 700,
+                }}
+              >
+                0:00.0
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <button

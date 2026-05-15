@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useGROOVA } from "../lib/store";
 import { audioEngine } from "../lib/audioEngine";
 
@@ -11,14 +11,20 @@ type Props = {
 };
 
 export default function MasterBpmBar({ onSync, syncFlash, isLandscape, inline }: Props) {
-  const { masterBpm, setMasterBpm, isPlaying, tracks } = useGROOVA();
+  // tracks は selector で最小化（配列の参照が毎回変わっても再レンダリングしない）
+  const masterBpm = useGROOVA((s) => s.masterBpm);
+  const setMasterBpm = useGROOVA((s) => s.setMasterBpm);
+  const isPlaying = useGROOVA((s) => s.isPlaying);
+  // tracks は speed 更新のためだけに使う — BPM変更時のみ反応すればOKなので
+  // tracks を直接 subscribe せず store.getState() で取得してレンダリングを減らす
   const [tapTimes, setTapTimes] = useState<number[]>([]);
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState(String(masterBpm));
 
-  // 再生中にBPM変更 → 即座にplaybackRate更新
+  // 再生中にBPM変更 → 即座にplaybackRate更新（tracks を subscribe しない）
   useEffect(() => {
     if (!isPlaying) return;
+    const tracks = useGROOVA.getState().tracks;
     const speeds: Record<string, number> = {};
     tracks.forEach((t) => {
       if (t.bpm && t.bpm > 0) {
@@ -26,7 +32,7 @@ export default function MasterBpmBar({ onSync, syncFlash, isLandscape, inline }:
       }
     });
     audioEngine.updateAllSpeeds(speeds);
-  }, [masterBpm, isPlaying, tracks]);
+  }, [masterBpm, isPlaying]);
 
   useEffect(() => {
     if (!editing) setInputVal(String(masterBpm));
@@ -122,7 +128,7 @@ export default function MasterBpmBar({ onSync, syncFlash, isLandscape, inline }:
       )}
 
       {/* Beat pulse indicator */}
-      <BeatPulse bpm={masterBpm} isPlaying={isPlaying} />
+      <BeatPulse bpm={masterBpm} />
     </div>
   );
 
@@ -175,26 +181,37 @@ export default function MasterBpmBar({ onSync, syncFlash, isLandscape, inline }:
   );
 }
 
-function BeatPulse({ bpm, isPlaying }: { bpm: number; isPlaying: boolean }) {
-  const [lit, setLit] = useState(false);
+// BeatPulse — state なし。DOM を直接操作して再レンダリングゼロ
+function BeatPulse({ bpm }: { bpm: number }) {
+  const dotRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const interval = 60000 / bpm;
+    let timeoutId: ReturnType<typeof setTimeout>;
     const id = setInterval(() => {
-      setLit(true);
-      setTimeout(() => setLit(false), 80);
+      if (dotRef.current) {
+        dotRef.current.style.background = "#a8ff3e";
+        dotRef.current.style.boxShadow = "0 0 8px #a8ff3e";
+      }
+      timeoutId = setTimeout(() => {
+        if (dotRef.current) {
+          dotRef.current.style.background = "#1a1a24";
+          dotRef.current.style.boxShadow = "none";
+        }
+      }, 80);
     }, interval);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      clearTimeout(timeoutId);
+    };
   }, [bpm]);
 
   return (
     <div
+      ref={dotRef}
       style={{
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: lit ? "#a8ff3e" : "#1a1a24",
-        boxShadow: lit ? "0 0 8px #a8ff3e" : "none",
+        width: 8, height: 8, borderRadius: "50%",
+        background: "#1a1a24", boxShadow: "none",
         transition: "background 0.05s, box-shadow 0.05s",
         flexShrink: 0,
       }}
