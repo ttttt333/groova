@@ -36,7 +36,13 @@ export default function GROOVAApp() {
     return () => { audioEngine.onDebugLog = null; };
   }, []);
 
+  const lastPlayTap = useRef(0);
   const handlePlay = () => {
+    // 300ms以内の連続タップを無視（iOSの二重発火対策）
+    const now = Date.now();
+    if (now - lastPlayTap.current < 300) return;
+    lastPlayTap.current = now;
+
     if (isPlaying) {
       audioEngine.stop();
       setIsPlaying(false);

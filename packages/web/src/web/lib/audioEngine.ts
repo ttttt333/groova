@@ -89,7 +89,15 @@ class AudioEngine {
     return ctx;
   }
 
+  private isPlaying = false;
+
   play(offsetSeconds = 0): void {
+    // 連打ガード: 再生中なら一度stopしてから再開
+    if (this.isPlaying) {
+      this.stop();
+    }
+    this.isPlaying = true;
+
     const ctx = this.getContext();
     const store = useGROOVA.getState();
 
@@ -148,6 +156,7 @@ class AudioEngine {
   }
 
   stop(): void {
+    this.isPlaying = false;
     this.activeNodes.forEach(({ source }) => {
       try { source.stop(); } catch {}
     });
