@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Square, Zap, Grid3x3, ZoomIn, ZoomOut,
-  Download, Sparkles, Music2, SkipBack, Volume2
+  Download, Sparkles, Music2, SkipBack, Volume2, Gauge
 } from "lucide-react";
 import { useGROOVA } from "../lib/store";
 import { audioEngine } from "../lib/audioEngine";
@@ -13,7 +13,7 @@ import SFXPanel from "../components/SFXPanel";
 import ExportPanel from "../components/ExportPanel";
 import TrackSettingsSheet from "../components/TrackSettingsSheet";
 
-type BottomSheet = "fx" | "sfx" | "export" | "settings" | null;
+type BottomSheet = "fx" | "sfx" | "export" | "settings" | "bpm" | null;
 
 /** 画面の向きを監視 */
 function useIsLandscape() {
@@ -280,6 +280,7 @@ export default function GROOVAApp() {
             { id: "fx" as const, label: "FX", icon: <Sparkles size={14} /> },
             { id: "sfx" as const, label: "効果音", icon: <Music2 size={14} /> },
             { id: "settings" as const, label: "設定", icon: <Volume2 size={14} /> },
+            { id: "bpm" as const, label: "BPM確認", icon: <Gauge size={14} /> },
           ].map((tool) => (
             <button
               key={tool.id}
@@ -434,6 +435,7 @@ export default function GROOVAApp() {
               { id: "fx" as const, label: "FX", icon: <Sparkles size={18} /> },
               { id: "sfx" as const, label: "効果音", icon: <Music2 size={18} /> },
               { id: "settings" as const, label: "設定", icon: <Volume2 size={18} /> },
+              { id: "bpm" as const, label: "BPM確認", icon: <Gauge size={18} /> },
             ].map((tool) => (
               <button
                 key={tool.id}
@@ -488,11 +490,127 @@ export default function GROOVAApp() {
                 {sheet === "sfx" && <SFXPanel />}
                 {sheet === "export" && <ExportPanel />}
                 {sheet === "settings" && <TrackSettingsSheet />}
+                {sheet === "bpm" && <BpmInfoSheet tracks={tracks} masterBpm={masterBpm} />}
               </div>
             </motion.div>
           </>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// ── BPM一覧シート ──
+function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").TrackState[]; masterBpm: number }) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <Gauge size={16} color="#a8ff3e" />
+        <span style={{ fontFamily: "Space Grotesk", fontWeight: 700, fontSize: 15, color: "#e0e0ff" }}>
+          BPM 確認
+        </span>
+      </div>
+
+      {/* マスターBPM */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 14px", borderRadius: 10, marginBottom: 8,
+        background: "linear-gradient(135deg, #a8ff3e18, #00f5ff10)",
+        border: "1px solid #a8ff3e33",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "linear-gradient(135deg, #a8ff3e, #00f5ff)" }} />
+          <span style={{ fontFamily: "Space Grotesk", fontSize: 13, color: "#a0a0c0", fontWeight: 600 }}>
+            マスター BPM
+          </span>
+        </div>
+        <span style={{
+          fontFamily: "JetBrains Mono, monospace", fontSize: 18, fontWeight: 700,
+          background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
+          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+        }}>
+          {masterBpm}
+        </span>
+      </div>
+
+      {/* 各トラック */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {tracks.map((track, i) => {
+          const hasBpm = track.bpm && track.bpm > 0;
+          const confidence = Math.round((track.bpmConfidence ?? 0) * 100);
+          const diff = hasBpm ? Math.round((track.bpm! - masterBpm) * 10) / 10 : null;
+          const diffColor = diff === null ? "#555" : Math.abs(diff) < 1 ? "#a8ff3e" : Math.abs(diff) < 5 ? "#ffcc44" : "#ff6b44";
+
+          return (
+            <div
+              key={track.id}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "9px 14px", borderRadius: 10,
+                background: "#1a1a28",
+                border: "1px solid #2a2a3a",
+                opacity: track.audioBuffer ? 1 : 0.45,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                {/* 番号バッジ */}
+                <div style={{
+                  width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                  background: "#2a2a40",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 11, color: "#6666aa", fontFamily: "JetBrains Mono", fontWeight: 700,
+                }}>
+                  {i + 1}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "Space Grotesk", fontSize: 12, fontWeight: 600,
+                    color: "#c0c0d8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    maxWidth: 130,
+                  }}>
+                    {track.name}
+                  </div>
+                  {hasBpm && (
+                    <div style={{ fontSize: 10, color: "#555577", fontFamily: "Space Grotesk", marginTop: 1 }}>
+                      確度 {confidence}%
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                {/* 差分バッジ */}
+                {diff !== null && (
+                  <div style={{
+                    padding: "2px 7px", borderRadius: 5,
+                    background: `${diffColor}18`,
+                    border: `1px solid ${diffColor}44`,
+                    fontSize: 10, fontFamily: "JetBrains Mono", fontWeight: 700,
+                    color: diffColor,
+                  }}>
+                    {diff >= 0 ? `+${diff}` : `${diff}`}
+                  </div>
+                )}
+                {/* BPM値 */}
+                <span style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 16, fontWeight: 700,
+                  color: hasBpm ? "#e0e0ff" : "#333355",
+                  minWidth: 52, textAlign: "right",
+                }}>
+                  {hasBpm ? track.bpm!.toFixed(1) : "—"}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {tracks.every((t) => !t.audioBuffer) && (
+        <p style={{ textAlign: "center", color: "#333355", fontSize: 12, fontFamily: "Space Grotesk", marginTop: 12 }}>
+          音声をロードするとBPMが表示されます
+        </p>
+      )}
     </div>
   );
 }
