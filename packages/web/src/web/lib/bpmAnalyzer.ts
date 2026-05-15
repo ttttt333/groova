@@ -1,66 +1,103 @@
 /**
- * BPM Analyzer using Web Audio API + autocorrelation
- * Lightweight DSP — no heavy ML libraries
+ * BPM Analyzer — improved multi-algorithm approach
+ * 1. RMS-based onset strength
+ * 2. Spectral flux onset (HF emphasis)
+ * 3. Autocorrelation over both, pick highest-confidence winner
+ * 4. Harmonic check: prefer integer multiples/halves that score better
  */
 
 export type BPMResult = {
   bpm: number;
   confidence: number;
-  beatPositions: number[]; // seconds
-  downbeatPositions: number[]; // every 4 beats
+  beatPositions: number[];
+  downbeatPositions: number[];
 };
 
-/**
- * Compute onset detection function from audio buffer
- */
-function computeOnsetStrength(
-  channelData: Float32Array,
-  sampleRate: number,
-  hopSize = 512,
-  fftSize = 2048
-): Float32Array {
-  const numFrames = Math.floor((channelData.length - fftSize) / hopSize);
-  const onsets = new Float32Array(numFrames);
+// --- Onset detection ---
 
-  let prevEnergy = 0;
+function computeRMSOnset(
+  mono: Float32Array,
+  sampleRate: number,
+  hopSize = 441
+): Float32Array {
+  const blockSize = 1024;
+  const numFrames = Math.floor((mono.length - blockSize) / hopSize);
+  const onsets = new Float32Array(numFrames);
+  let prevRms = 0;
   for (let i = 0; i < numFrames; i++) {
-    const start = i * hopSize;
+    const s = i * hopSize;
     let energy = 0;
-    for (let j = start; j < start + fftSize && j < channelData.length; j++) {
-      energy += channelData[j] * channelData[j];
-    }
-    const rms = Math.sqrt(energy / fftSize);
-    onsets[i] = Math.max(0, rms - prevEnergy);
-    prevEnergy = rms;
+    for (let j = s; j < s + blockSize; j++) energy += mono[j] * mono[j];
+    const rms = Math.sqrt(energy / blockSize);
+    onsets[i] = Math.max(0, rms - prevRms);
+    prevRms = rms;
   }
   return onsets;
 }
 
-/**
- * Autocorrelation BPM detection
- */
-function detectBPMFromOnsets(
+function computeSpectralFluxOnset(
+  mono: Float32Array,
+  sampleRate: number,
+  hopSize = 441,
+  fftSize = 2048
+): Float32Array {
+  const numFrames = Math.floor((mono.length - fftSize) / hopSize);
+  const onsets = new Float32Array(numFrames);
+
+  // Simple high-frequency emphasis: look at the top 1/4 of the spectrum via naive DFT bands
+  // Instead of full FFT (expensive), use a fast approximation: split into 8 sub-bands and track flux in upper bands
+  const bands = 8;
+  const bandSize = Math.floor(fftSize / bands);
+  const prevPower = new Float32Array(bands);
+
+  for (let i = 0; i < numFrames; i++) {
+    const start = i * hopSize;
+    let flux = 0;
+    for (let b = 0; b < bands; b++) {
+      const weight = 1 + b * 0.5; // emphasize high bands
+      let power = 0;
+      const bStart = start + b * bandSize;
+      for (let j = bStart; j < bStart + bandSize && j < mono.length; j++) {
+        power += mono[j] * mono[j];
+      }
+      power /= bandSize;
+      const diff = power - prevPower[b];
+      if (diff > 0) flux += diff * weight;
+      prevPower[b] = power;
+    }
+    onsets[i] = flux;
+  }
+  return onsets;
+}
+
+// --- Autocorrelation BPM ---
+
+function autocorrelBPM(
   onsets: Float32Array,
   sampleRate: number,
-  hopSize: number
+  hopSize: number,
+  minBPM = 60,
+  maxBPM = 200
 ): { bpm: number; confidence: number } {
   const secPerFrame = hopSize / sampleRate;
-  const minBPM = 60;
-  const maxBPM = 200;
-  const minLag = Math.round(60 / (maxBPM * secPerFrame));
+  const minLag = Math.max(1, Math.round(60 / (maxBPM * secPerFrame)));
   const maxLag = Math.round(60 / (minBPM * secPerFrame));
 
+  // Mean-subtracted onsets for better correlation
+  let mean = 0;
+  for (let i = 0; i < onsets.length; i++) mean += onsets[i];
+  mean /= onsets.length;
+  const centered = new Float32Array(onsets.length);
+  for (let i = 0; i < onsets.length; i++) centered[i] = onsets[i] - mean;
+
   let bestBpm = 120;
-  let bestScore = 0;
+  let bestScore = -Infinity;
 
   for (let lag = minLag; lag <= maxLag; lag++) {
     let score = 0;
-    let count = 0;
-    for (let i = 0; i < onsets.length - lag; i++) {
-      score += onsets[i] * onsets[i + lag];
-      count++;
-    }
-    if (count > 0) score /= count;
+    const n = onsets.length - lag;
+    for (let i = 0; i < n; i++) score += centered[i] * centered[i + lag];
+    score /= n;
 
     const bpm = 60 / (lag * secPerFrame);
     if (score > bestScore) {
@@ -69,14 +106,91 @@ function detectBPMFromOnsets(
     }
   }
 
-  // Normalize confidence
-  const confidence = Math.min(1, bestScore * 50);
-  return { bpm: Math.round(bestBpm * 10) / 10, confidence };
+  // Also check half/double of best (sub-harmonic correction)
+  const candidates = [bestBpm];
+  if (bestBpm * 2 <= maxBPM) candidates.push(bestBpm * 2);
+  if (bestBpm / 2 >= minBPM) candidates.push(bestBpm / 2);
+
+  // Re-score each candidate with its nearest integer lag
+  let finalBpm = bestBpm;
+  let finalScore = bestScore;
+  for (const cand of candidates) {
+    const lag = Math.round(60 / (cand * secPerFrame));
+    if (lag < minLag || lag > maxLag) continue;
+    let score = 0;
+    const n = onsets.length - lag;
+    for (let i = 0; i < n; i++) score += centered[i] * centered[i + lag];
+    score /= n;
+    if (score > finalScore) {
+      finalScore = score;
+      finalBpm = cand;
+    }
+  }
+
+  // Normalize confidence 0..1
+  const maxPossible = (() => {
+    let s = 0;
+    for (let i = 0; i < centered.length; i++) s += centered[i] * centered[i];
+    return s / centered.length;
+  })();
+  const confidence = maxPossible > 0 ? Math.min(1, finalScore / maxPossible) : 0;
+
+  return { bpm: finalBpm, confidence: Math.max(0, confidence) };
 }
 
-/**
- * Pick beat positions using the detected BPM
- */
+// --- Harmonic correction ---
+// After detecting BPM, try integer multiples/halves in musical range and
+// pick the one most supported by the onset autocorrelation peak.
+function harmonicCorrect(
+  onsets: Float32Array,
+  bpm: number,
+  sampleRate: number,
+  hopSize: number
+): number {
+  const secPerFrame = hopSize / sampleRate;
+  const minBPM = 60;
+  const maxBPM = 200;
+
+  const candidates: number[] = [bpm];
+  // halves and doubles
+  let b = bpm;
+  while (b / 2 >= minBPM) { b /= 2; candidates.push(b); }
+  b = bpm;
+  while (b * 2 <= maxBPM) { b *= 2; candidates.push(b); }
+  // also 1.5x / 0.75x (triplet feel)
+  if (bpm * 1.5 <= maxBPM) candidates.push(bpm * 1.5);
+  if (bpm / 1.5 >= minBPM) candidates.push(bpm / 1.5);
+
+  let bestBpm = bpm;
+  let bestScore = -Infinity;
+
+  // Mean-subtract
+  let mean = 0;
+  for (let i = 0; i < onsets.length; i++) mean += onsets[i];
+  mean /= onsets.length;
+  const centered = new Float32Array(onsets.length);
+  for (let i = 0; i < onsets.length; i++) centered[i] = onsets[i] - mean;
+
+  for (const cand of candidates) {
+    const lag = Math.round(60 / (cand * secPerFrame));
+    if (lag < 1 || lag >= onsets.length) continue;
+    let score = 0;
+    const n = centered.length - lag;
+    for (let i = 0; i < n; i++) score += centered[i] * centered[i + lag];
+    score /= n;
+    // Small bias toward the original value to avoid unnecessary changes
+    const bias = cand === bpm ? 0.05 : 0;
+    if (score + bias > bestScore) {
+      bestScore = score + bias;
+      bestBpm = cand;
+    }
+  }
+
+  return bestBpm;
+}
+
+// --- Beat position picking ---
+
 function pickBeatPositions(
   onsets: Float32Array,
   bpm: number,
@@ -84,19 +198,20 @@ function pickBeatPositions(
   hopSize: number,
   duration: number
 ): number[] {
-  const beatInterval = 60 / bpm; // seconds per beat
+  const beatInterval = 60 / bpm;
+  const secPerFrame = hopSize / sampleRate;
+  const framesPerBeat = beatInterval / secPerFrame;
   const positions: number[] = [];
 
-  // Find best phase offset
   let bestPhase = 0;
   let bestScore = -1;
-  const framesPerBeat = beatInterval / (hopSize / sampleRate);
+  const searchSteps = Math.ceil(framesPerBeat);
 
-  for (let phaseOffset = 0; phaseOffset < framesPerBeat; phaseOffset += 1) {
+  for (let phaseOffset = 0; phaseOffset < searchSteps; phaseOffset++) {
     let score = 0;
     let frame = phaseOffset;
     while (frame < onsets.length) {
-      score += onsets[Math.round(frame)] || 0;
+      score += onsets[Math.min(Math.round(frame), onsets.length - 1)];
       frame += framesPerBeat;
     }
     if (score > bestScore) {
@@ -105,8 +220,6 @@ function pickBeatPositions(
     }
   }
 
-  // Generate beat times from best phase
-  const secPerFrame = hopSize / sampleRate;
   let t = bestPhase * secPerFrame;
   while (t < duration) {
     positions.push(Math.round(t * 1000) / 1000);
@@ -116,77 +229,87 @@ function pickBeatPositions(
   return positions;
 }
 
-/**
- * Main analysis function — runs in Web Worker or main thread
- */
+// --- Main export ---
+
 export async function analyzeBPM(audioBuffer: AudioBuffer): Promise<BPMResult> {
   const sampleRate = audioBuffer.sampleRate;
   const duration = audioBuffer.duration;
 
-  // Mix down to mono
+  // Mix to mono
   const numChannels = audioBuffer.numberOfChannels;
   const length = audioBuffer.length;
   const mono = new Float32Array(length);
-
   for (let c = 0; c < numChannels; c++) {
-    const channel = audioBuffer.getChannelData(c);
-    for (let i = 0; i < length; i++) {
-      mono[i] += channel[i] / numChannels;
-    }
+    const ch = audioBuffer.getChannelData(c);
+    for (let i = 0; i < length; i++) mono[i] += ch[i] / numChannels;
   }
 
-  // Use middle 60s for faster analysis
-  const analyzeStart = Math.floor(Math.min(10, duration * 0.1) * sampleRate);
-  const analyzeLength = Math.floor(Math.min(60, duration * 0.6) * sampleRate);
-  const segment = mono.slice(analyzeStart, analyzeStart + analyzeLength);
+  // Analyze multiple segments for robustness: intro skip + middle
+  const segDuration = Math.min(90, duration * 0.7);
+  const skip = Math.floor(Math.min(8, duration * 0.05) * sampleRate);
+  const segLen = Math.floor(segDuration * sampleRate);
+  const segment = mono.slice(skip, skip + segLen);
 
-  const hopSize = 512;
-  const fftSize = 2048;
-  const onsets = computeOnsetStrength(segment, sampleRate, hopSize, fftSize);
-  const { bpm, confidence } = detectBPMFromOnsets(onsets, sampleRate, hopSize);
+  const hopSize = 441; // ~10ms @ 44100Hz — finer resolution than 512
 
-  // Clamp to musical range
-  let finalBpm = bpm;
-  while (finalBpm < 60) finalBpm *= 2;
-  while (finalBpm > 200) finalBpm /= 2;
-  finalBpm = Math.round(finalBpm * 10) / 10;
+  const rmsOnsets = computeRMSOnset(segment, sampleRate, hopSize);
+  const fluxOnsets = computeSpectralFluxOnset(segment, sampleRate, hopSize);
 
-  const beatPositions = pickBeatPositions(onsets, finalBpm, sampleRate, hopSize, duration);
+  const rmsResult = autocorrelBPM(rmsOnsets, sampleRate, hopSize);
+  const fluxResult = autocorrelBPM(fluxOnsets, sampleRate, hopSize);
+
+  // Pick the higher-confidence result
+  let bestOnsets: Float32Array;
+  let rawBpm: number;
+  if (fluxResult.confidence >= rmsResult.confidence) {
+    bestOnsets = fluxOnsets;
+    rawBpm = fluxResult.bpm;
+  } else {
+    bestOnsets = rmsOnsets;
+    rawBpm = rmsResult.bpm;
+  }
+
+  // Clamp to musical range first
+  let bpm = rawBpm;
+  while (bpm < 60) bpm *= 2;
+  while (bpm > 200) bpm /= 2;
+
+  // Harmonic correction
+  bpm = harmonicCorrect(bestOnsets, bpm, sampleRate, hopSize);
+
+  // Final musical range clamp
+  while (bpm < 60) bpm *= 2;
+  while (bpm > 200) bpm /= 2;
+
+  bpm = Math.round(bpm * 10) / 10;
+
+  const confidence = Math.max(rmsResult.confidence, fluxResult.confidence);
+  const beatPositions = pickBeatPositions(bestOnsets, bpm, sampleRate, hopSize, duration);
   const downbeatPositions = beatPositions.filter((_, i) => i % 4 === 0);
 
-  return {
-    bpm: finalBpm,
-    confidence,
-    beatPositions,
-    downbeatPositions,
-  };
+  return { bpm, confidence, beatPositions, downbeatPositions };
 }
 
-/**
- * Decode audio file to AudioBuffer
- */
+// --- File decode ---
+
 export async function decodeAudioFile(
   file: File,
   ctx: AudioContext
 ): Promise<AudioBuffer> {
   const arrayBuffer = await file.arrayBuffer();
-  // iOS SafariはPromise形式のdecodeAudioDataをサポートしない場合があるのでコールバック形式を使う
   return new Promise((resolve, reject) => {
     ctx.decodeAudioData(arrayBuffer, resolve, reject);
   });
 }
 
-/**
- * Extract waveform data for display
- * 高解像度: サンプル数を多く取り、高ズームでもなめらかに
- */
+// --- Waveform extraction ---
+
 export function extractWaveform(
   audioBuffer: AudioBuffer,
   numSamples = 4000
 ): Float32Array {
   const channelData = audioBuffer.getChannelData(0);
   const ch2 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
-  // 最低でもサンプルレート/10のサンプル数を確保（1秒あたり ~4410点）
   const actual = Math.min(numSamples, channelData.length);
   const blockSize = Math.max(1, Math.floor(channelData.length / actual));
   const waveform = new Float32Array(actual);
