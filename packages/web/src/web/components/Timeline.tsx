@@ -49,7 +49,7 @@ function formatTime(sec: number) {
 
 export default function Timeline() {
   const {
-    tracks, updateTrack, masterBpm, showGrid, playheadTime,
+    tracks, updateTrack, masterBpm, showGrid,
     setPlayheadTime, isPlaying, zoomLevel, addTrack, setMasterBpm,
     scrollResetCounter, removeTrack,
   } = useGROOVA();
@@ -57,18 +57,22 @@ export default function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerDragRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  // プレイヘッドDOMを直接操作するためのref（Reactレンダリング外）
+  const playheadLineRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<number>();
   const isDraggingPlayhead = useRef(false);
-  const scrollTargetRef = useRef<number | null>(null); // lerp target for auto-scroll
+  const scrollTargetRef = useRef<number | null>(null);
   const isDraggingTrack = useRef<{ id: string; startX: number; origOffset: number } | null>(null);
   const pinchRef = useRef<{ dist: number; zoom: number } | null>(null);
+  // 波形再描画フラグ
+  const needsWaveRedraw = useRef(true);
+  const needsRulerRedraw = useRef(true);
 
   const [trackOffsets, setTrackOffsets] = useState<Record<string, number>>({});
   const [bpmToast, setBpmToast] = useState<{ bpm: number; trackName: string; color: string } | null>(null);
   const prevBpmRef = useRef<Record<string, number | null>>({});
   const pxPerSec = PIXELS_PER_SEC_BASE * zoomLevel;
 
-  // 一番上の音源ありトラック
   const topAudioTrack = tracks.find((t) => t.audioBuffer && t.beatPositions?.length > 0) ?? null;
 
   const maxDuration = Math.max(
@@ -100,312 +104,314 @@ export default function Timeline() {
     });
   }, [tracks]);
 
-  // refs for animation loop（deps最小化）
-  const playheadTimeRef = useRef(playheadTime);
+  // tracksやzoom等が変わったら波形再描画フラグを立てる
+  useEffect(() => {
+    needsWaveRedraw.current = true;
+    needsRulerRedraw.current = true;
+  }, [tracks, pxPerSec, trackOffsets, showGrid, masterBpm]);
+
+  // refs for rAF（stateをrefで参照して再レンダリングを起こさない）
+  const playheadTimeRef = useRef(0);
   const isPlayingRef = useRef(isPlaying);
   const pxPerSecRef = useRef(pxPerSec);
   const showGridRef = useRef(showGrid);
   const topAudioTrackRef = useRef(topAudioTrack);
-  useEffect(() => { playheadTimeRef.current = playheadTime; }, [playheadTime]);
+  const trackOffsetsRef = useRef(trackOffsets);
+  const tracksRef = useRef(tracks);
+  const masterBpmRef = useRef(masterBpm);
+  const maxDurationRef = useRef(maxDuration);
+  const canvasWidthRef = useRef(canvasWidth);
+
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
   useEffect(() => { pxPerSecRef.current = pxPerSec; }, [pxPerSec]);
   useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
   useEffect(() => { topAudioTrackRef.current = topAudioTrack; }, [topAudioTrack]);
+  useEffect(() => { trackOffsetsRef.current = trackOffsets; }, [trackOffsets]);
+  useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+  useEffect(() => { masterBpmRef.current = masterBpm; }, [masterBpm]);
+  useEffect(() => { maxDurationRef.current = maxDuration; }, [maxDuration]);
+  useEffect(() => { canvasWidthRef.current = canvasWidth; }, [canvasWidth]);
 
-  // ── drawTrack ──
-  const drawTrack = useCallback(
-    (track: TrackState) => {
-      const canvas = canvasRefs.current.get(track.id);
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+  // ── drawTrack（波形のみ・プレイヘッドなし） ──
+  const drawTrack = useCallback((track: TrackState) => {
+    const canvas = canvasRefs.current.get(track.id);
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-      const W = canvas.width;
-      const H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#0d0d14";
-      ctx.fillRect(0, 0, W, H);
+    const W = canvas.width;
+    const H = canvas.height;
+    const pxPerSec = pxPerSecRef.current;
+    const trackOffsets = trackOffsetsRef.current;
 
-      const offset = trackOffsets[track.id] || 0;
-      const waveform = track.waveformData;
-      const duration = track.audioBuffer?.duration || 0;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#0d0d14";
+    ctx.fillRect(0, 0, W, H);
 
-      if (waveform && duration > 0) {
-        const clipX = offset * pxPerSec;
-        const clipW = duration * pxPerSec;
+    const offset = trackOffsets[track.id] || 0;
+    const waveform = track.waveformData;
+    const duration = track.audioBuffer?.duration || 0;
 
-        // クリップ背景
-        ctx.fillStyle = track.color + "18";
+    if (waveform && duration > 0) {
+      const clipX = offset * pxPerSec;
+      const clipW = duration * pxPerSec;
+
+      ctx.fillStyle = track.color + "18";
+      ctx.beginPath();
+      ctx.roundRect(clipX, 2, clipW, H - 4, 4);
+      ctx.fill();
+      ctx.strokeStyle = track.color + "66";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(clipX, 2, clipW, H - 4, 4);
+      ctx.stroke();
+
+      const samplesPerPx = waveform.length / clipW;
+
+      if (samplesPerPx > 1) {
         ctx.beginPath();
-        ctx.roundRect(clipX, 2, clipW, H - 4, 4);
-        ctx.fill();
-        ctx.strokeStyle = track.color + "66";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(clipX, 2, clipW, H - 4, 4);
-        ctx.stroke();
-
-        const samplesPerPx = waveform.length / clipW;
-
-        if (samplesPerPx > 1) {
-          // 縮小: min/max エンベロープ
-          ctx.beginPath();
-          const midY = H / 2;
-          const ampScale = (H - 8) * 0.42;
-          for (let px = 0; px < clipW; px++) {
-            const sStart = Math.floor(px * samplesPerPx);
-            const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
-            let max = 0;
-            for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
-            const y = midY - max * ampScale;
-            if (px === 0) ctx.moveTo(clipX + px, y); else ctx.lineTo(clipX + px, y);
-          }
-          for (let px = Math.floor(clipW) - 1; px >= 0; px--) {
-            const sStart = Math.floor(px * samplesPerPx);
-            const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
-            let max = 0;
-            for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
-            ctx.lineTo(clipX + px, midY + max * ampScale);
-          }
-          ctx.closePath();
-          ctx.fillStyle = track.color + "bb";
-          ctx.fill();
-          ctx.strokeStyle = track.color;
-          ctx.lineWidth = 0.5;
-          ctx.stroke();
-        } else {
-          // 拡大: バー描画
-          const pxPerSample = clipW / waveform.length;
-          const barW = Math.max(1, pxPerSample - (pxPerSample > 3 ? 1 : 0));
-          const scrollLeft = scrollRef.current?.scrollLeft || 0;
-          const viewWidth = scrollRef.current?.clientWidth || clipW;
-          const visStart = Math.max(0, Math.floor(((scrollLeft - clipX) / clipW) * waveform.length) - 2);
-          const visEnd = Math.min(waveform.length, Math.ceil(((scrollLeft + viewWidth - clipX) / clipW) * waveform.length) + 2);
-          ctx.fillStyle = track.color + "dd";
-          const midY = H / 2;
-          const ampScale = (H - 8) * 0.42;
-          for (let i = visStart; i < visEnd; i++) {
-            const amp = waveform[i];
-            const barH = amp * ampScale * 2;
-            ctx.fillRect(clipX + i * pxPerSample, midY - barH / 2, barW, barH);
-          }
-          ctx.strokeStyle = track.color + "44";
-          ctx.lineWidth = 0.5;
-          ctx.beginPath();
-          ctx.moveTo(clipX, H / 2);
-          ctx.lineTo(clipX + clipW, H / 2);
-          ctx.stroke();
+        const midY = H / 2;
+        const ampScale = (H - 8) * 0.42;
+        for (let px = 0; px < clipW; px++) {
+          const sStart = Math.floor(px * samplesPerPx);
+          const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
+          let max = 0;
+          for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
+          const y = midY - max * ampScale;
+          if (px === 0) ctx.moveTo(clipX + px, y); else ctx.lineTo(clipX + px, y);
         }
-
-        // トラック名
-        ctx.fillStyle = track.color + "99";
-        ctx.font = "bold 9px Space Grotesk, sans-serif";
-        ctx.fillText(track.name, clipX + 6, H - 6);
-
-        // BPM表示
-        if (track.bpm) {
-          ctx.fillStyle = track.color;
-          ctx.font = "bold 9px JetBrains Mono, monospace";
-          ctx.fillText(`${track.bpm}`, clipX + 6, 14);
+        for (let px = Math.floor(clipW) - 1; px >= 0; px--) {
+          const sStart = Math.floor(px * samplesPerPx);
+          const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
+          let max = 0;
+          for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
+          ctx.lineTo(clipX + px, midY + max * ampScale);
         }
-
-        // トリムハンドル
-        const trimStartX = clipX + (track.trimStart / duration) * clipW;
-        const trimEndX = clipX + ((track.trimEnd || duration) / duration) * clipW;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(trimStartX - 1, 0, 2, H);
-        ctx.beginPath(); ctx.moveTo(trimStartX, 2); ctx.lineTo(trimStartX + 10, 2); ctx.lineTo(trimStartX, 14); ctx.fill();
-        ctx.fillRect(trimEndX - 1, 0, 2, H);
-        ctx.beginPath(); ctx.moveTo(trimEndX, 2); ctx.lineTo(trimEndX - 10, 2); ctx.lineTo(trimEndX, 14); ctx.fill();
-
-        // ── 8カウントマーカー（一番上のトラックのみ・showGrid ON時） ──
-        if (showGridRef.current) {
-          const top = topAudioTrackRef.current;
-          if (top && top.id === track.id && top.beatPositions?.length > 0) {
-            const beats = top.beatPositions;
-            const topOffset = trackOffsets[top.id] || 0;
-            beats.forEach((beatTime, i) => {
-              if (i % 8 !== 0) return; // 8拍ごとのみ
-              const countNum = Math.floor(i / 8) + 1;
-              const bx = (topOffset + beatTime) * pxPerSec;
-              if (bx < 0 || bx > W) return;
-
-              // 縦線（全体高さ）
-              ctx.strokeStyle = "#a8ff3ecc";
-              ctx.lineWidth = 1.5;
-              ctx.setLineDash([]);
-              ctx.beginPath();
-              ctx.moveTo(bx, 0);
-              ctx.lineTo(bx, H);
-              ctx.stroke();
-
-              // 上部三角マーカー
-              ctx.fillStyle = "#a8ff3e";
-              ctx.beginPath();
-              ctx.moveTo(bx - 5, 0);
-              ctx.lineTo(bx + 5, 0);
-              ctx.lineTo(bx, 8);
-              ctx.closePath();
-              ctx.fill();
-
-              // カウント番号
-              ctx.fillStyle = "#a8ff3e";
-              ctx.font = "bold 8px JetBrains Mono, monospace";
-              ctx.fillText(String(countNum), bx + 3, 20);
-            });
-          }
-        }
-
-      } else {
-        // 空トラック
-        ctx.strokeStyle = "#2a2a3a";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([6, 4]);
-        ctx.strokeRect(2, 2, W - 4, H - 4);
-        ctx.setLineDash([]);
-        ctx.fillStyle = "#2a2a3a";
-        ctx.font = "11px Inter, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("タップして追加", W / 2, H / 2 + 4);
-        ctx.textAlign = "left";
-      }
-
-      // 解析アニメ
-      if (track.isAnalyzing) {
-        const scanX = ((Date.now() % 2000) / 2000) * W;
-        const grad = ctx.createLinearGradient(scanX - 40, 0, scanX + 40, 0);
-        grad.addColorStop(0, "rgba(0,245,255,0)");
-        grad.addColorStop(0.5, "rgba(0,245,255,0.7)");
-        grad.addColorStop(1, "rgba(0,245,255,0)");
-        ctx.fillStyle = grad;
-        ctx.fillRect(scanX - 40, 0, 80, H);
-      }
-
-      // プレイヘッド
-      const phX = playheadTimeRef.current * pxPerSecRef.current;
-      if (phX >= 0 && phX <= W) {
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1.5;
-        ctx.globalAlpha = 0.9;
-        ctx.beginPath();
-        ctx.moveTo(phX, 0);
-        ctx.lineTo(phX, H);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-    },
-    [trackOffsets, pxPerSec]
-  );
-
-  // ── drawRuler ──
-  const drawRuler = useCallback(
-    (canvas: HTMLCanvasElement) => {
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const W = canvas.width;
-      const H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#0a0a0f";
-      ctx.fillRect(0, 0, W, H);
-
-      const stepSec = pxPerSec > 120 ? 1 : pxPerSec > 60 ? 2 : pxPerSec > 30 ? 4 : 8;
-      const beatSec = 60 / masterBpm;
-
-      // グリッドライン（BPMベース）
-      if (showGrid) {
-        let t = 0;
-        let beatIdx = 0;
-        while (t <= maxDuration) {
-          const x = t * pxPerSec;
-          const beat = beatIdx % 8;
-          if (beat === 0) {
-            ctx.strokeStyle = "rgba(168,255,62,0.5)";
-            ctx.lineWidth = 1.5;
-          } else if (beat === 4) {
-            ctx.strokeStyle = "rgba(168,255,62,0.25)";
-            ctx.lineWidth = 1;
-          } else {
-            ctx.strokeStyle = "rgba(168,255,62,0.08)";
-            ctx.lineWidth = 0.5;
-          }
-          ctx.beginPath();
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, H);
-          ctx.stroke();
-          t += beatSec;
-          beatIdx++;
-        }
-      }
-
-      // 時間目盛り
-      ctx.font = "9px JetBrains Mono, monospace";
-      let t = 0;
-      while (t <= maxDuration + stepSec) {
-        const x = t * pxPerSec;
-        ctx.fillStyle = "#555566";
-        ctx.fillRect(x, H - 8, 1, 8);
-        if (t % (stepSec * 2) === 0 || stepSec <= 2) {
-          ctx.fillStyle = "#888899";
-          ctx.fillText(formatTime(t), x + 2, H - 10);
-        }
-        t += stepSec;
-      }
-
-      // プレイヘッドのルーラー上のひし形マーカー
-      const phX = playheadTimeRef.current * pxPerSecRef.current;
-      if (phX >= 0 && phX <= W) {
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        ctx.moveTo(phX, H - 8);
-        ctx.lineTo(phX + 5, H);
-        ctx.lineTo(phX, H + 4);
-        ctx.lineTo(phX - 5, H);
         ctx.closePath();
+        ctx.fillStyle = track.color + "bb";
         ctx.fill();
+        ctx.strokeStyle = track.color;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      } else {
+        const pxPerSample = clipW / waveform.length;
+        const barW = Math.max(1, pxPerSample - (pxPerSample > 3 ? 1 : 0));
+        const scrollLeft = scrollRef.current?.scrollLeft || 0;
+        const viewWidth = scrollRef.current?.clientWidth || clipW;
+        const visStart = Math.max(0, Math.floor(((scrollLeft - clipX) / clipW) * waveform.length) - 2);
+        const visEnd = Math.min(waveform.length, Math.ceil(((scrollLeft + viewWidth - clipX) / clipW) * waveform.length) + 2);
+        ctx.fillStyle = track.color + "dd";
+        const midY = H / 2;
+        const ampScale = (H - 8) * 0.42;
+        for (let i = visStart; i < visEnd; i++) {
+          const amp = waveform[i];
+          const barH = amp * ampScale * 2;
+          ctx.fillRect(clipX + i * pxPerSample, midY - barH / 2, barW, barH);
+        }
+        ctx.strokeStyle = track.color + "44";
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(clipX, H / 2);
+        ctx.lineTo(clipX + clipW, H / 2);
+        ctx.stroke();
       }
-    },
-    [pxPerSec, maxDuration, showGrid, masterBpm]
-  );
+
+      ctx.fillStyle = track.color + "99";
+      ctx.font = "bold 9px Space Grotesk, sans-serif";
+      ctx.fillText(track.name, clipX + 6, H - 6);
+
+      if (track.bpm) {
+        ctx.fillStyle = track.color;
+        ctx.font = "bold 9px JetBrains Mono, monospace";
+        ctx.fillText(`${track.bpm}`, clipX + 6, 14);
+      }
+
+      const trimStartX = clipX + (track.trimStart / duration) * clipW;
+      const trimEndX = clipX + ((track.trimEnd || duration) / duration) * clipW;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(trimStartX - 1, 0, 2, H);
+      ctx.beginPath(); ctx.moveTo(trimStartX, 2); ctx.lineTo(trimStartX + 10, 2); ctx.lineTo(trimStartX, 14); ctx.fill();
+      ctx.fillRect(trimEndX - 1, 0, 2, H);
+      ctx.beginPath(); ctx.moveTo(trimEndX, 2); ctx.lineTo(trimEndX - 10, 2); ctx.lineTo(trimEndX, 14); ctx.fill();
+
+      // 8カウントマーカー
+      if (showGridRef.current) {
+        const top = topAudioTrackRef.current;
+        if (top && top.id === track.id && top.beatPositions?.length > 0) {
+          const beats = top.beatPositions;
+          const topOffset = trackOffsetsRef.current[top.id] || 0;
+          beats.forEach((beatTime, i) => {
+            if (i % 8 !== 0) return;
+            const countNum = Math.floor(i / 8) + 1;
+            const bx = (topOffset + beatTime) * pxPerSec;
+            if (bx < 0 || bx > W) return;
+            ctx.strokeStyle = "#a8ff3ecc";
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(bx, 0);
+            ctx.lineTo(bx, H);
+            ctx.stroke();
+            ctx.fillStyle = "#a8ff3e";
+            ctx.beginPath();
+            ctx.moveTo(bx - 5, 0);
+            ctx.lineTo(bx + 5, 0);
+            ctx.lineTo(bx, 8);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = "#a8ff3e";
+            ctx.font = "bold 8px JetBrains Mono, monospace";
+            ctx.fillText(String(countNum), bx + 3, 20);
+          });
+        }
+      }
+    } else {
+      ctx.strokeStyle = "#2a2a3a";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(2, 2, W - 4, H - 4);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#2a2a3a";
+      ctx.font = "11px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("タップして追加", W / 2, H / 2 + 4);
+      ctx.textAlign = "left";
+    }
+
+    // 解析アニメ（これだけはrAFで毎フレーム更新が必要）
+    if (track.isAnalyzing) {
+      const scanX = ((Date.now() % 2000) / 2000) * W;
+      const grad = ctx.createLinearGradient(scanX - 40, 0, scanX + 40, 0);
+      grad.addColorStop(0, "rgba(0,245,255,0)");
+      grad.addColorStop(0.5, "rgba(0,245,255,0.7)");
+      grad.addColorStop(1, "rgba(0,245,255,0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(scanX - 40, 0, 80, H);
+      return true; // 解析中は毎フレーム再描画が必要
+    }
+    return false;
+  }, []); // deps なし — すべて ref 経由
+
+  // ── drawRuler（プレイヘッドなし） ──
+  const drawRuler = useCallback((canvas: HTMLCanvasElement) => {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const W = canvas.width;
+    const H = canvas.height;
+    const pxPerSec = pxPerSecRef.current;
+    const maxDuration = maxDurationRef.current;
+    const masterBpm = masterBpmRef.current;
+    const showGrid = showGridRef.current;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#0a0a0f";
+    ctx.fillRect(0, 0, W, H);
+
+    const stepSec = pxPerSec > 120 ? 1 : pxPerSec > 60 ? 2 : pxPerSec > 30 ? 4 : 8;
+    const beatSec = 60 / masterBpm;
+
+    if (showGrid) {
+      let t = 0;
+      let beatIdx = 0;
+      while (t <= maxDuration) {
+        const x = t * pxPerSec;
+        const beat = beatIdx % 8;
+        if (beat === 0) {
+          ctx.strokeStyle = "rgba(168,255,62,0.5)";
+          ctx.lineWidth = 1.5;
+        } else if (beat === 4) {
+          ctx.strokeStyle = "rgba(168,255,62,0.25)";
+          ctx.lineWidth = 1;
+        } else {
+          ctx.strokeStyle = "rgba(168,255,62,0.08)";
+          ctx.lineWidth = 0.5;
+        }
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+        t += beatSec;
+        beatIdx++;
+      }
+    }
+
+    ctx.font = "9px JetBrains Mono, monospace";
+    let t = 0;
+    while (t <= maxDuration + stepSec) {
+      const x = t * pxPerSec;
+      ctx.fillStyle = "#555566";
+      ctx.fillRect(x, H - 8, 1, 8);
+      if (t % (stepSec * 2) === 0 || stepSec <= 2) {
+        ctx.fillStyle = "#888899";
+        ctx.fillText(formatTime(t), x + 2, H - 10);
+      }
+      t += stepSec;
+    }
+  }, []); // deps なし
 
   // Canvas resize
   useEffect(() => {
     tracks.forEach((t) => {
       const canvas = canvasRefs.current.get(t.id);
-      if (canvas && canvas.width !== canvasWidth) canvas.width = canvasWidth;
+      if (canvas && canvas.width !== canvasWidth) {
+        canvas.width = canvasWidth;
+        needsWaveRedraw.current = true;
+      }
     });
     const ruler = document.getElementById("groova-ruler") as HTMLCanvasElement;
-    if (ruler && ruler.width !== canvasWidth) ruler.width = canvasWidth;
+    if (ruler && ruler.width !== canvasWidth) {
+      ruler.width = canvasWidth;
+      needsRulerRedraw.current = true;
+    }
   }, [tracks.length, canvasWidth]);
 
-  // rAF loop
+  // ── rAF loop: プレイヘッドDOM更新 + オートスクロール + 必要時のみ波形描画 ──
   useEffect(() => {
     const loop = () => {
-      const rulerCanvas = document.getElementById("groova-ruler") as HTMLCanvasElement;
-      tracks.forEach((t) => drawTrack(t));
-      if (rulerCanvas) drawRuler(rulerCanvas);
+      // ① プレイヘッド位置を audioEngine から直接取得（storeを経由しない）
+      const phTime = audioEngine.getCurrentTime();
+      playheadTimeRef.current = phTime;
 
-      // オートスクロール（再生中）— lerpで滑らか追従
+      // ② プレイヘッドDIVを transform で直接動かす（React再レンダリングなし）
+      if (playheadLineRef.current) {
+        const x = phTime * pxPerSecRef.current;
+        playheadLineRef.current.style.transform = `translateX(${x}px)`;
+      }
+
+      // ③ 解析中トラックがあれば波形フラグを立てる
+      const hasAnalyzing = tracksRef.current.some((t) => t.isAnalyzing);
+      if (hasAnalyzing) needsWaveRedraw.current = true;
+
+      // ④ 波形再描画（変化時のみ）
+      if (needsWaveRedraw.current) {
+        tracksRef.current.forEach((t) => drawTrack(t));
+        needsWaveRedraw.current = false;
+      }
+      if (needsRulerRedraw.current) {
+        const rulerCanvas = document.getElementById("groova-ruler") as HTMLCanvasElement;
+        if (rulerCanvas) drawRuler(rulerCanvas);
+        needsRulerRedraw.current = false;
+      }
+
+      // ⑤ オートスクロール（lerp）
       if (scrollRef.current) {
         const container = scrollRef.current;
         if (isPlayingRef.current && !isDraggingPlayhead.current) {
-          const phX = playheadTimeRef.current * pxPerSecRef.current;
+          const phX = phTime * pxPerSecRef.current;
           const viewLeft = container.scrollLeft;
           const viewW = container.clientWidth;
-          // プレイヘッドが右75%を超えたら or 左端より左になったらターゲット更新
           if (phX > viewLeft + viewW * 0.75 || phX < viewLeft) {
             scrollTargetRef.current = Math.max(0, phX - viewW * 0.25);
           }
         }
-        // ターゲットがあれば lerp で近づく
         if (scrollTargetRef.current !== null) {
-          const cur = scrollRef.current.scrollLeft;
-          const target = scrollTargetRef.current;
-          const diff = target - cur;
+          const cur = container.scrollLeft;
+          const diff = scrollTargetRef.current - cur;
           if (Math.abs(diff) < 0.5) {
-            scrollRef.current.scrollLeft = target;
+            container.scrollLeft = scrollTargetRef.current;
             scrollTargetRef.current = null;
           } else {
-            scrollRef.current.scrollLeft = cur + diff * 0.12;
+            container.scrollLeft = cur + diff * 0.14;
           }
         }
       }
@@ -414,23 +420,28 @@ export default function Timeline() {
     };
     animRef.current = requestAnimationFrame(loop);
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
-  }, [tracks, drawTrack, drawRuler]);
+  }, [drawTrack, drawRuler]); // tracks等はref経由なので依存不要
 
-  const playheadX = playheadTime * pxPerSec;
-
-  // ── ルーラーのみpointer drag（波形エリアはネイティブスクロール） ──
+  // ── ルーラーpointer drag ──
   const handleRulerPointerDown = (e: React.PointerEvent) => {
     isDraggingPlayhead.current = true;
+    scrollTargetRef.current = null;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft || 0);
-    setPlayheadTime(Math.max(0, x / pxPerSec));
+    const t = Math.max(0, x / pxPerSecRef.current);
+    playheadTimeRef.current = t;
+    setPlayheadTime(t);
+    audioEngine.seekTo?.(t);
   };
   const handleRulerPointerMove = (e: React.PointerEvent) => {
     if (!isDraggingPlayhead.current) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft || 0);
-    setPlayheadTime(Math.max(0, x / pxPerSec));
+    const t = Math.max(0, x / pxPerSecRef.current);
+    playheadTimeRef.current = t;
+    setPlayheadTime(t);
+    audioEngine.seekTo?.(t);
   };
   const handleRulerPointerUp = () => {
     isDraggingPlayhead.current = false;
@@ -450,7 +461,7 @@ export default function Timeline() {
     if (!isDraggingTrack.current) return;
     const { id, startX, origOffset } = isDraggingTrack.current;
     const dx = e.clientX - startX;
-    setTrackOffsets((prev) => ({ ...prev, [id]: Math.max(0, origOffset + dx / pxPerSec) }));
+    setTrackOffsets((prev) => ({ ...prev, [id]: Math.max(0, origOffset + dx / pxPerSecRef.current) }));
   };
   const handleTrackPointerUp = () => { isDraggingTrack.current = null; };
 
@@ -522,16 +533,13 @@ export default function Timeline() {
         )}
       </AnimatePresence>
 
-      {/* ── ラベル列（固定） + スクロール領域 ── */}
       <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-
-        {/* 左: ラベル列（スクロールしない） */}
+        {/* 左: ラベル列 */}
         <div style={{
           width: LABEL_WIDTH, flexShrink: 0,
           display: "flex", flexDirection: "column",
           borderRight: "1px solid #1a1a24", background: "#0c0c14", zIndex: 5,
         }}>
-          {/* TIME ラベル */}
           <div style={{
             height: RULER_HEIGHT, flexShrink: 0,
             borderBottom: "1px solid #1a1a24",
@@ -540,8 +548,6 @@ export default function Timeline() {
           }}>
             <span style={{ fontSize: 9, color: "#333344" }}>TIME</span>
           </div>
-
-          {/* Track labels */}
           <div style={{ flex: 1, overflowY: "hidden" }}>
             {tracks.map((track) => (
               <TrackLabel
@@ -571,23 +577,17 @@ export default function Timeline() {
         <div
           ref={scrollRef}
           onScroll={() => {
-            // 再生中でなければ手動スクロール→lerp target をキャンセル
             if (!isPlayingRef.current) scrollTargetRef.current = null;
           }}
           style={{
-            flex: 1,
-            overflowX: "auto",
-            overflowY: "hidden",
-            scrollbarWidth: "thin",
-            scrollbarColor: "#252535 #0a0a0f",
-            position: "relative",
-            // タッチスクロールを妨げない
-            touchAction: "pan-x",
+            flex: 1, overflowX: "auto", overflowY: "hidden",
+            scrollbarWidth: "thin", scrollbarColor: "#252535 #0a0a0f",
+            position: "relative", touchAction: "pan-x",
           }}
         >
           <div style={{ width: canvasWidth, position: "relative", minHeight: "100%" }}>
 
-            {/* ルーラー（クリック/ドラッグでplayhead設定） */}
+            {/* ルーラー */}
             <div style={{ height: RULER_HEIGHT, position: "relative", flexShrink: 0 }}>
               <canvas
                 id="groova-ruler"
@@ -595,14 +595,9 @@ export default function Timeline() {
                 height={RULER_HEIGHT}
                 style={{ display: "block" }}
               />
-              {/* ルーラー上の透明オーバーレイ（playhead drag用） */}
               <div
                 ref={rulerDragRef}
-                style={{
-                  position: "absolute", inset: 0,
-                  cursor: "col-resize",
-                  touchAction: "none", // ルーラーだけはpointer drag優先
-                }}
+                style={{ position: "absolute", inset: 0, cursor: "col-resize", touchAction: "none" }}
                 onPointerDown={handleRulerPointerDown}
                 onPointerMove={handleRulerPointerMove}
                 onPointerUp={handleRulerPointerUp}
@@ -624,20 +619,24 @@ export default function Timeline() {
               />
             ))}
 
-            {/* Add track empty */}
             {tracks.length < 6 && (
               <div style={{ height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24", background: "#080810" }} />
             )}
 
-            {/* Playhead DOM line */}
-            <div style={{
-              position: "absolute", top: 0, left: playheadX,
-              width: 2, height: "100%", background: "white",
-              pointerEvents: "none", zIndex: 20,
-            }}>
+            {/* プレイヘッド — transform で直接移動（Reactレンダリング外） */}
+            <div
+              ref={playheadLineRef}
+              style={{
+                position: "absolute", top: 0, left: 0,
+                width: 2, height: "100%",
+                background: "rgba(255,255,255,0.9)",
+                pointerEvents: "none", zIndex: 20,
+                willChange: "transform",
+              }}
+            >
               <div style={{
-                position: "absolute", top: -1, left: -6,
-                width: 14, height: 14, background: "white",
+                position: "absolute", top: RULER_HEIGHT - 8, left: -5,
+                width: 12, height: 12, background: "white",
                 clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
               }} />
             </div>
@@ -734,7 +733,6 @@ function TrackCanvas({ track, canvasWidth, canvasRefs, onPointerDown, onPointerM
         }}
         style={{
           width: "100%", height: "100%", display: "block",
-          // クリップドラッグはpointerで、スクロールはブラウザのpan-xに任せる
           touchAction: track.audioBuffer ? "none" : "pan-x",
           cursor: track.audioBuffer ? "grab" : "default",
           pointerEvents: track.audioBuffer ? "auto" : "none",

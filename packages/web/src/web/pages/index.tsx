@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Square, Zap, Grid3x3, ZoomIn, ZoomOut,
@@ -504,8 +504,6 @@ export default function GROOVAApp() {
 function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").TrackState[]; masterBpm: number }) {
   const { updateTrack } = useGROOVA();
 
-  // 各トラックの「現在のターゲットBPM」をローカルstateで管理
-  // 初期値 = track.bpm * track.speed (= 現在再生BPM)
   const [targetBpms, setTargetBpms] = useState<Record<string, number>>(() => {
     const init: Record<string, number> = {};
     for (const t of tracks) {
@@ -516,36 +514,75 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
     return init;
   });
 
-  const applyBpm = (trackId: string, newTargetBpm: number) => {
+  // 長押し連続変化用 ref
+  const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const applyBpm = useCallback((trackId: string, newTargetBpm: number) => {
     const track = tracks.find((t) => t.id === trackId);
     if (!track || !track.bpm || track.bpm === 0) return;
-    const newSpeed = newTargetBpm / track.bpm;
+    const clamped = Math.min(300, Math.max(40, Math.round(newTargetBpm * 10) / 10));
+    const newSpeed = clamped / track.bpm;
+    setTargetBpms((prev) => ({ ...prev, [trackId]: clamped }));
     updateTrack(trackId, { speed: newSpeed });
     audioEngine.updateSpeed(trackId, newSpeed);
-  };
-
-  const handleSlider = (trackId: string, val: number) => {
-    setTargetBpms((prev) => ({ ...prev, [trackId]: val }));
-    applyBpm(trackId, val);
-  };
-
-  const handleInputCommit = (trackId: string, raw: string) => {
-    const val = parseFloat(raw);
-    if (isNaN(val) || val < 40 || val > 300) return;
-    const rounded = Math.round(val * 10) / 10;
-    setTargetBpms((prev) => ({ ...prev, [trackId]: rounded }));
-    applyBpm(trackId, rounded);
-  };
+  }, [tracks, updateTrack]);
 
   const handleReset = (trackId: string) => {
     const track = tracks.find((t) => t.id === trackId);
     if (!track || !track.bpm || track.bpm === 0) return;
-    setTargetBpms((prev) => ({ ...prev, [trackId]: Math.round(track.bpm! * 10) / 10 }));
+    const original = Math.round(track.bpm * 10) / 10;
+    setTargetBpms((prev) => ({ ...prev, [trackId]: original }));
     updateTrack(trackId, { speed: 1 });
     audioEngine.updateSpeed(trackId, 1);
   };
 
+  const startHold = (trackId: string, delta: number, currentBpm: number) => {
+    // 即時1回
+    applyBpm(trackId, currentBpm + delta);
+    // 500ms後に連続開始
+    const timeout = setTimeout(() => {
+      holdTimerRef.current = setInterval(() => {
+        setTargetBpms((prev) => {
+          const next = Math.min(300, Math.max(40, Math.round((prev[trackId] + delta) * 10) / 10));
+          applyBpm(trackId, next);
+          return prev; // applyBpm 内で更新するので prev を返す
+        });
+      }, 80);
+    }, 400);
+    holdTimerRef.current = timeout as unknown as ReturnType<typeof setInterval>;
+  };
+
+  const stopHold = () => {
+    if (holdTimerRef.current !== null) {
+      clearTimeout(holdTimerRef.current as unknown as ReturnType<typeof setTimeout>);
+      clearInterval(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
+
   const audioTracks = tracks.filter((t) => t.audioBuffer && t.bpm && t.bpm > 0);
+
+  const BpmStepBtn = ({
+    label, trackId, delta, currentBpm,
+  }: { label: string; trackId: string; delta: number; currentBpm: number }) => (
+    <button
+      onMouseDown={() => startHold(trackId, delta, currentBpm)}
+      onMouseUp={stopHold}
+      onMouseLeave={stopHold}
+      onTouchStart={(e) => { e.preventDefault(); startHold(trackId, delta, currentBpm); }}
+      onTouchEnd={stopHold}
+      style={{
+        flex: 1, padding: "8px 0", borderRadius: 8,
+        background: "#1e1e2e", border: "1px solid #2e2e44",
+        color: "#c0c0d8", fontFamily: "JetBrains Mono", fontSize: 13, fontWeight: 700,
+        cursor: "pointer", userSelect: "none", WebkitUserSelect: "none",
+        transition: "background 0.1s",
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#2a2a40"; }}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div>
@@ -585,7 +622,7 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
           音声をロードするとBPMが表示されます
         </p>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {tracks.map((track, i) => {
             if (!track.audioBuffer || !track.bpm || track.bpm === 0) return null;
             const originalBpm = track.bpm;
@@ -599,106 +636,97 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
               <div
                 key={track.id}
                 style={{
-                  padding: "12px 14px", borderRadius: 12,
+                  padding: "14px", borderRadius: 14,
                   background: "#1a1a28", border: `1px solid ${isChanged ? "#a8ff3e33" : "#2a2a3a"}`,
                 }}
               >
-                {/* トラック名 + BPM数値 + リセット */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    <div style={{
-                      width: 20, height: 20, borderRadius: 5, flexShrink: 0,
-                      background: "#2a2a40", display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 10, color: "#6666aa", fontFamily: "JetBrains Mono", fontWeight: 700,
-                    }}>
-                      {i + 1}
-                    </div>
-                    <span style={{
-                      fontFamily: "Space Grotesk", fontSize: 12, fontWeight: 600,
-                      color: "#c0c0d8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      maxWidth: 110,
-                    }}>
-                      {track.name}
-                    </span>
-                    {/* 元BPM */}
-                    <span style={{ fontSize: 10, color: "#44445a", fontFamily: "JetBrains Mono", flexShrink: 0 }}>
-                      元 {originalBpm.toFixed(1)}
-                    </span>
+                {/* トラック名行 */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <div style={{
+                    width: 20, height: 20, borderRadius: 5, flexShrink: 0,
+                    background: "#2a2a40", display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, color: "#6666aa", fontFamily: "JetBrains Mono", fontWeight: 700,
+                  }}>
+                    {i + 1}
                   </div>
+                  <span style={{
+                    fontFamily: "Space Grotesk", fontSize: 12, fontWeight: 600,
+                    color: "#c0c0d8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    flex: 1,
+                  }}>
+                    {track.name}
+                  </span>
+                  <span style={{ fontSize: 10, color: "#44445a", fontFamily: "JetBrains Mono", flexShrink: 0 }}>
+                    元 {originalBpm.toFixed(1)}
+                  </span>
+                </div>
 
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                    {/* マスターとの差分 */}
+                {/* ── 現在BPM 大表示 ── */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 12 }}>
+                  <div style={{ textAlign: "center" }}>
                     <div style={{
-                      padding: "2px 6px", borderRadius: 5,
+                      fontFamily: "JetBrains Mono, monospace", fontSize: 42, fontWeight: 700, lineHeight: 1,
+                      background: isChanged
+                        ? "linear-gradient(135deg, #a8ff3e, #00f5ff)"
+                        : "linear-gradient(135deg, #8888aa, #6666aa)",
+                      WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                    }}>
+                      {currentTarget.toFixed(1)}
+                    </div>
+                    <div style={{ fontFamily: "Space Grotesk", fontSize: 10, color: "#44445a", marginTop: 2 }}>
+                      BPM
+                    </div>
+                  </div>
+                  {/* バッジ列 */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{
+                      padding: "3px 8px", borderRadius: 6,
                       background: `${diffColor}18`, border: `1px solid ${diffColor}44`,
                       fontSize: 10, fontFamily: "JetBrains Mono", fontWeight: 700, color: diffColor,
+                      textAlign: "center",
                     }}>
-                      {diffFromMaster >= 0 ? `+${diffFromMaster}` : `${diffFromMaster}`}
+                      {diffFromMaster >= 0 ? `+${diffFromMaster}` : `${diffFromMaster}`} vs master
                     </div>
-
-                    {/* BPM数値入力 */}
-                    <input
-                      type="number"
-                      min={40} max={300} step={0.1}
-                      value={currentTarget.toFixed(1)}
-                      onChange={(e) => setTargetBpms((prev) => ({ ...prev, [track.id]: parseFloat(e.target.value) || currentTarget }))}
-                      onBlur={(e) => handleInputCommit(track.id, e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleInputCommit(track.id, (e.target as HTMLInputElement).value); }}
-                      style={{
-                        width: 62, padding: "3px 6px", borderRadius: 6,
-                        background: "#0e0e1a", border: `1px solid ${isChanged ? "#a8ff3e55" : "#2a2a3a"}`,
-                        color: isChanged ? "#a8ff3e" : "#e0e0ff",
-                        fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: 700,
-                        textAlign: "center", outline: "none",
-                        // number input の矢印を消す
-                        MozAppearance: "textfield" as never,
-                      }}
-                    />
-
-                    {/* リセット */}
-                    {isChanged && (
-                      <button
-                        onClick={() => handleReset(track.id)}
-                        style={{
-                          padding: "3px 8px", borderRadius: 6,
-                          background: "#2a1a1a", border: "1px solid #ff6b4433",
-                          color: "#ff6b44", fontSize: 10,
-                          fontFamily: "Space Grotesk", fontWeight: 600,
-                          cursor: "pointer", flexShrink: 0,
-                        }}
-                      >
-                        リセット
-                      </button>
-                    )}
+                    <div style={{
+                      padding: "3px 8px", borderRadius: 6,
+                      background: "#2a2a3a",
+                      fontSize: 10, fontFamily: "JetBrains Mono", fontWeight: 700,
+                      color: "#6666aa", textAlign: "center",
+                    }}>
+                      {speedRatio.toFixed(3)}×
+                    </div>
                   </div>
                 </div>
 
-                {/* スライダー */}
+                {/* ── ±ボタン行 ── */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                  <BpmStepBtn label="−1" trackId={track.id} delta={-1} currentBpm={currentTarget} />
+                  <BpmStepBtn label="−0.1" trackId={track.id} delta={-0.1} currentBpm={currentTarget} />
+                  <BpmStepBtn label="+0.1" trackId={track.id} delta={+0.1} currentBpm={currentTarget} />
+                  <BpmStepBtn label="+1" trackId={track.id} delta={+1} currentBpm={currentTarget} />
+                </div>
+
+                {/* ── スライダー (補助) ── */}
                 <div style={{ position: "relative" }}>
-                  {/* トラック背景 */}
                   <div style={{
                     position: "absolute", top: "50%", left: 0, right: 0,
-                    height: 4, borderRadius: 999, background: "#2a2a3a",
+                    height: 3, borderRadius: 999, background: "#2a2a3a",
                     transform: "translateY(-50%)", pointerEvents: "none",
                   }} />
-                  {/* fill */}
                   <div style={{
                     position: "absolute", top: "50%", left: 0,
-                    height: 4, borderRadius: 999,
-                    background: isChanged
-                      ? "linear-gradient(90deg, #a8ff3e, #00f5ff)"
-                      : "#3a3a4a",
+                    height: 3, borderRadius: 999,
+                    background: isChanged ? "linear-gradient(90deg, #a8ff3e, #00f5ff)" : "#3a3a4a",
                     transform: "translateY(-50%)",
                     width: `${((currentTarget - 40) / (300 - 40)) * 100}%`,
                     pointerEvents: "none",
                   }} />
                   <input
-                    type="range"
-                    min={40} max={300} step={0.5}
+                    type="range" min={40} max={300} step={0.5}
                     value={currentTarget}
-                    onChange={(e) => handleSlider(track.id, parseFloat(e.target.value))}
+                    onChange={(e) => applyBpm(track.id, parseFloat(e.target.value))}
                     style={{
-                      width: "100%", height: 28,
+                      width: "100%", height: 24,
                       appearance: "none", WebkitAppearance: "none",
                       background: "transparent", cursor: "pointer",
                       position: "relative", zIndex: 1,
@@ -706,11 +734,8 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
                   />
                 </div>
 
-                {/* 目盛り: ×0.5 / 元BPM / ×2 */}
-                <div style={{
-                  display: "flex", justifyContent: "space-between",
-                  marginTop: 2, paddingInline: 2,
-                }}>
+                {/* ── 目盛り + リセット ── */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                   {[
                     { bpm: Math.max(40, originalBpm * 0.5), label: "×0.5" },
                     { bpm: originalBpm, label: "元" },
@@ -718,28 +743,31 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
                   ].map(({ bpm, label }) => (
                     <button
                       key={label}
-                      onClick={() => handleSlider(track.id, Math.round(bpm * 10) / 10)}
+                      onClick={() => applyBpm(track.id, Math.round(bpm * 10) / 10)}
                       style={{
                         background: "none", border: "none", padding: "2px 4px",
                         color: Math.abs(currentTarget - bpm) < 0.5 ? "#a8ff3e" : "#444466",
-                        fontSize: 9, fontFamily: "Space Grotesk", fontWeight: 600,
-                        cursor: "pointer",
+                        fontSize: 9, fontFamily: "Space Grotesk", fontWeight: 600, cursor: "pointer",
                       }}
                     >
                       {label}<br />
                       <span style={{ fontFamily: "JetBrains Mono", fontSize: 9 }}>{bpm.toFixed(0)}</span>
                     </button>
                   ))}
-                  {/* speedバッジ */}
-                  <div style={{
-                    alignSelf: "center",
-                    padding: "2px 6px", borderRadius: 5,
-                    background: "#2a2a3a",
-                    fontSize: 9, fontFamily: "JetBrains Mono", fontWeight: 700,
-                    color: "#6666aa",
-                  }}>
-                    {speedRatio.toFixed(2)}×
-                  </div>
+                  {isChanged && (
+                    <button
+                      onClick={() => handleReset(track.id)}
+                      style={{
+                        padding: "3px 10px", borderRadius: 6,
+                        background: "#2a1a1a", border: "1px solid #ff6b4433",
+                        color: "#ff6b44", fontSize: 10,
+                        fontFamily: "Space Grotesk", fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      リセット
+                    </button>
+                  )}
                 </div>
               </div>
             );
