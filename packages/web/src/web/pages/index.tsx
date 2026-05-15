@@ -471,8 +471,8 @@ export default function GROOVAApp() {
               initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 28, stiffness: 300 }}
               style={{
-                position: "fixed", bottom: 0, left: "50%",
-                transform: "translateX(-50%)",
+                position: "fixed", bottom: 0, left: 0, right: 0,
+                margin: "0 auto",
                 width: "100%", maxWidth: 480,
                 background: "#111118",
                 borderRadius: "20px 20px 0 0",
