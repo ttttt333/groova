@@ -4,8 +4,8 @@ import { useGROOVA, TrackState } from "../lib/store";
 import { analyzeBPM, decodeAudioFile, extractWaveform } from "../lib/bpmAnalyzer";
 import { audioEngine } from "../lib/audioEngine";
 
-const TRACK_HEIGHT = 52;
-const RULER_HEIGHT = 28;
+const TRACK_HEIGHT = 76;
+const RULER_HEIGHT = 32;
 const LABEL_WIDTH = 52;
 const PIXELS_PER_SEC_BASE = 80;
 

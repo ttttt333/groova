@@ -2,8 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Square, Zap, Grid3x3, ZoomIn, ZoomOut,
-  Download, Sparkles, Music2, Plus, ChevronDown,
-  SkipBack, Volume2
+  Download, Sparkles, Music2, SkipBack, Volume2
 } from "lucide-react";
 import { useGROOVA } from "../lib/store";
 import { audioEngine } from "../lib/audioEngine";
@@ -16,6 +15,23 @@ import TrackSettingsSheet from "../components/TrackSettingsSheet";
 
 type BottomSheet = "fx" | "sfx" | "export" | "settings" | null;
 
+/** 画面の向きを監視 */
+function useIsLandscape() {
+  const [landscape, setLandscape] = useState(
+    () => window.innerWidth > window.innerHeight
+  );
+  useEffect(() => {
+    const update = () => setLandscape(window.innerWidth > window.innerHeight);
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+  return landscape;
+}
+
 export default function GROOVAApp() {
   const {
     isPlaying, setIsPlaying, masterBpm, zoomLevel, setZoom,
@@ -25,10 +41,10 @@ export default function GROOVAApp() {
 
   const [sheet, setSheet] = useState<BottomSheet>(null);
   const [syncFlash, setSyncFlash] = useState(false);
+  const isLandscape = useIsLandscape();
 
   const lastPlayTap = useRef(0);
   const handlePlay = () => {
-    // 300ms以内の連続タップを無視（iOSの二重発火対策）
     const now = Date.now();
     if (now - lastPlayTap.current < 300) return;
     lastPlayTap.current = now;
@@ -58,15 +74,22 @@ export default function GROOVAApp() {
   };
 
   const toggleSheet = (s: BottomSheet) => setSheet((prev) => (prev === s ? null : s));
-
   const hasAudio = tracks.some((t) => t.audioBuffer);
+
+  // ズームステップ（適応的）
+  const zoomStep = (cur: number) =>
+    cur < 1 ? 0.25 : cur < 4 ? 0.5 : cur < 16 ? 2 : 4;
+
+  // ボタン高さ: 横画面で小さく
+  const btnH = isLandscape ? 32 : 40;
+  const btnR = isLandscape ? 8 : 10;
 
   return (
     <div
       style={{
         background: "#0a0a0f",
         width: "100%",
-        maxWidth: 480,
+        maxWidth: isLandscape ? "100%" : 480,
         margin: "0 auto",
         height: "100dvh",
         display: "flex",
@@ -81,7 +104,7 @@ export default function GROOVAApp() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "10px 14px 8px",
+          padding: isLandscape ? "6px 14px" : "14px 16px 12px",
           background: "rgba(10,10,15,0.95)",
           borderBottom: "1px solid #1a1a24",
           flexShrink: 0,
@@ -91,13 +114,9 @@ export default function GROOVAApp() {
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div
             style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
+              width: 28, height: 28, borderRadius: 8,
               background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >
             <span style={{ fontWeight: 900, fontSize: 14, color: "#000", fontFamily: "Space Grotesk" }}>G</span>
@@ -106,7 +125,7 @@ export default function GROOVAApp() {
             style={{
               fontFamily: "Space Grotesk, sans-serif",
               fontWeight: 800,
-              fontSize: 20,
+              fontSize: isLandscape ? 16 : 20,
               letterSpacing: -0.5,
               background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
               WebkitBackgroundClip: "text",
@@ -117,22 +136,16 @@ export default function GROOVAApp() {
           </span>
         </div>
 
-        {/* Export button — CapCut style */}
         <button
           onClick={() => toggleSheet("export")}
           style={{
-            padding: "6px 16px",
+            padding: isLandscape ? "4px 12px" : "6px 16px",
             borderRadius: 999,
             background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
-            border: "none",
-            color: "#000",
+            border: "none", color: "#000",
             fontFamily: "Space Grotesk, sans-serif",
-            fontWeight: 700,
-            fontSize: 13,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
+            fontWeight: 700, fontSize: 13, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 5,
           }}
         >
           <Download size={13} />
@@ -141,119 +154,105 @@ export default function GROOVAApp() {
       </header>
 
       {/* ── Master BPM bar ── */}
-      <MasterBpmBar onSync={handleSync} syncFlash={syncFlash} />
+      <MasterBpmBar onSync={handleSync} syncFlash={syncFlash} isLandscape={isLandscape} />
 
-      {/* ── Timeline (main area, fills remaining space) ── */}
+      {/* ── Timeline ── */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <Timeline />
       </div>
 
       {/* ── Transport bar ── */}
-      <div
-        style={{
-          flexShrink: 0,
-          background: "#0e0e18",
-          borderTop: "1px solid #1a1a24",
-          padding: "8px 12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
-        {/* Playhead time + zoom */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span
-            style={{
-              fontFamily: "JetBrains Mono, monospace",
-              fontSize: 13,
-              color: "#a8ff3e",
-              fontWeight: 700,
-            }}
-          >
-            {formatTime(playheadTime)}
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {/* Grid toggle */}
-            <button
-              onClick={() => setShowGrid(!showGrid)}
-              style={{
-                padding: "4px 8px",
-                borderRadius: 6,
-                background: showGrid ? "#a8ff3e15" : "#1a1a24",
-                border: `1px solid ${showGrid ? "#a8ff3e44" : "#2a2a3a"}`,
-                color: showGrid ? "#a8ff3e" : "#4a4a5a",
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                fontSize: 10,
-                cursor: "pointer",
-                fontFamily: "Space Grotesk, sans-serif",
-                fontWeight: 600,
-              }}
-            >
-              <Grid3x3 size={11} />
-              8カウント
-            </button>
-            {/* Zoom */}
-            <button
-              onClick={() => {
-                // 適応的ステップ: 低ズームで細かく、高ズームで大きく
-                const step = zoomLevel <= 1 ? 0.25 : zoomLevel <= 4 ? 0.5 : zoomLevel <= 16 ? 2 : 4;
-                setZoom(Math.max(0.25, zoomLevel - step));
-              }}
-              style={{ padding: 5, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: 6, color: "#9999aa", cursor: "pointer" }}
-            >
-              <ZoomOut size={13} />
-            </button>
-            <span style={{ fontSize: 10, color: "#4a4a5a", minWidth: 36, textAlign: "center", fontFamily: "JetBrains Mono" }}>
-              {zoomLevel < 10 ? zoomLevel.toFixed(1) : Math.round(zoomLevel)}×
-            </span>
-            <button
-              onClick={() => {
-                const step = zoomLevel < 1 ? 0.25 : zoomLevel < 4 ? 0.5 : zoomLevel < 16 ? 2 : 4;
-                setZoom(Math.min(64, zoomLevel + step));
-              }}
-              style={{ padding: 5, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: 6, color: "#9999aa", cursor: "pointer" }}
-            >
-              <ZoomIn size={13} />
-            </button>
-          </div>
-        </div>
-
-        {/* Transport buttons */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {/* Return to start */}
+      {isLandscape ? (
+        /* 横画面: 全部1行 */
+        <div
+          style={{
+            flexShrink: 0,
+            background: "#0e0e18",
+            borderTop: "1px solid #1a1a24",
+            padding: "5px 10px",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {/* ⏮ */}
           <button
             onClick={handleStop}
             style={{
-              width: 40, height: 40, borderRadius: 10,
+              width: btnH, height: btnH, borderRadius: btnR,
               background: "#1a1a24", border: "1px solid #2a2a3a",
               color: "#9999aa", display: "flex", alignItems: "center",
               justifyContent: "center", cursor: "pointer", flexShrink: 0,
             }}
           >
-            <SkipBack size={16} />
+            <SkipBack size={14} />
           </button>
 
-          {/* Play / Pause */}
+          {/* ▶ / ■ */}
           <motion.button
             onClick={handlePlay}
             whileTap={{ scale: 0.93 }}
             style={{
-              flex: 1, height: 40, borderRadius: 10,
+              width: 80, height: btnH, borderRadius: btnR, flexShrink: 0,
               background: isPlaying
                 ? "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)"
                 : "linear-gradient(135deg, #ffffff22, #ffffff11)",
               border: `1.5px solid ${isPlaying ? "#ff6b2b88" : "#333344"}`,
               color: isPlaying ? "#ff6b2b" : "white",
               fontFamily: "Space Grotesk, sans-serif",
-              fontWeight: 700, fontSize: 14,
+              fontWeight: 700, fontSize: 12,
               display: "flex", alignItems: "center",
-              justifyContent: "center", gap: 6, cursor: "pointer",
+              justifyContent: "center", gap: 5, cursor: "pointer",
             }}
           >
-            {isPlaying ? <><Square size={14} fill="currentColor" /> 停止</> : <><Play size={14} fill="currentColor" /> 再生</>}
+            {isPlaying ? <><Square size={12} fill="currentColor" /> 停止</> : <><Play size={12} fill="currentColor" /> 再生</>}
           </motion.button>
+
+          {/* 時間 */}
+          <span style={{
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 12, color: "#a8ff3e", fontWeight: 700,
+            minWidth: 72, flexShrink: 0,
+          }}>
+            {formatTime(playheadTime)}
+          </span>
+
+          {/* spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* グリッド */}
+          <button
+            onClick={() => setShowGrid(!showGrid)}
+            style={{
+              height: btnH, padding: "0 8px", borderRadius: btnR,
+              background: showGrid ? "#a8ff3e15" : "#1a1a24",
+              border: `1px solid ${showGrid ? "#a8ff3e44" : "#2a2a3a"}`,
+              color: showGrid ? "#a8ff3e" : "#4a4a5a",
+              display: "flex", alignItems: "center", gap: 3,
+              fontSize: 10, cursor: "pointer",
+              fontFamily: "Space Grotesk, sans-serif", fontWeight: 600,
+            }}
+          >
+            <Grid3x3 size={10} />
+            8カウント
+          </button>
+
+          {/* ズーム */}
+          <button
+            onClick={() => setZoom(Math.max(0.25, zoomLevel - zoomStep(zoomLevel)))}
+            style={{ padding: 4, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: btnR, color: "#9999aa", cursor: "pointer" }}
+          >
+            <ZoomOut size={12} />
+          </button>
+          <span style={{ fontSize: 10, color: "#4a4a5a", minWidth: 32, textAlign: "center", fontFamily: "JetBrains Mono" }}>
+            {zoomLevel < 10 ? zoomLevel.toFixed(1) : Math.round(zoomLevel)}×
+          </span>
+          <button
+            onClick={() => setZoom(Math.min(64, zoomLevel + zoomStep(zoomLevel)))}
+            style={{ padding: 4, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: btnR, color: "#9999aa", cursor: "pointer" }}
+          >
+            <ZoomIn size={12} />
+          </button>
 
           {/* SYNC */}
           <motion.button
@@ -262,109 +261,225 @@ export default function GROOVAApp() {
             whileTap={{ scale: 0.93 }}
             animate={syncFlash ? { scale: [1, 1.08, 1] } : {}}
             style={{
-              width: 56, height: 40, borderRadius: 10, flexShrink: 0,
-              background: syncFlash
-                ? "linear-gradient(135deg, #a8ff3e, #00f5ff)"
-                : hasAudio ? "#a8ff3e22" : "#0a0a0f",
+              width: 48, height: btnH, borderRadius: btnR, flexShrink: 0,
+              background: syncFlash ? "linear-gradient(135deg, #a8ff3e, #00f5ff)" : hasAudio ? "#a8ff3e22" : "#0a0a0f",
               border: `1.5px solid ${hasAudio ? "#a8ff3e66" : "#1a1a24"}`,
               color: hasAudio ? "#a8ff3e" : "#2a2a3a",
               display: "flex", flexDirection: "column", alignItems: "center",
-              justifyContent: "center", cursor: hasAudio ? "pointer" : "default",
-              gap: 1,
+              justifyContent: "center", cursor: hasAudio ? "pointer" : "default", gap: 1,
             }}
           >
-            <Zap size={15} style={{ fill: hasAudio && !syncFlash ? "#a8ff3e" : syncFlash ? "#000" : "#2a2a3a" }}
+            <Zap size={13} style={{ fill: hasAudio && !syncFlash ? "#a8ff3e" : syncFlash ? "#000" : "#2a2a3a" }}
               color={syncFlash ? "#000" : undefined} />
-            <span style={{ fontSize: 8, fontFamily: "Space Grotesk", fontWeight: 700,
-              color: syncFlash ? "#000" : hasAudio ? "#a8ff3e" : "#2a2a3a" }}>
-              SYNC
-            </span>
+            <span style={{ fontSize: 7, fontFamily: "Space Grotesk", fontWeight: 700,
+              color: syncFlash ? "#000" : hasAudio ? "#a8ff3e" : "#2a2a3a" }}>SYNC</span>
           </motion.button>
-        </div>
-      </div>
 
-      {/* ── Bottom toolbar (CapCut-style tool row) ── */}
-      <div
-        style={{
-          flexShrink: 0,
-          background: "#0a0a0f",
-          borderTop: "1px solid #1a1a24",
-          display: "flex",
-          alignItems: "center",
-          overflowX: "auto",
-          gap: 4,
-          padding: "6px 8px",
-          paddingBottom: "calc(6px + env(safe-area-inset-bottom, 0px))",
-        }}
-      >
-        {[
-          { id: "fx" as const, label: "FX", icon: <Sparkles size={18} /> },
-          { id: "sfx" as const, label: "効果音", icon: <Music2 size={18} /> },
-          { id: "settings" as const, label: "設定", icon: <Volume2 size={18} /> },
-        ].map((tool) => (
-          <button
-            key={tool.id}
-            onClick={() => toggleSheet(tool.id)}
+          {/* ツールボタン群 */}
+          {[
+            { id: "fx" as const, label: "FX", icon: <Sparkles size={14} /> },
+            { id: "sfx" as const, label: "効果音", icon: <Music2 size={14} /> },
+            { id: "settings" as const, label: "設定", icon: <Volume2 size={14} /> },
+          ].map((tool) => (
+            <button
+              key={tool.id}
+              onClick={() => toggleSheet(tool.id)}
+              style={{
+                height: btnH, padding: "0 10px",
+                display: "flex", flexDirection: "column", alignItems: "center",
+                justifyContent: "center", gap: 2,
+                borderRadius: btnR,
+                background: sheet === tool.id ? "#a8ff3e15" : "#1a1a24",
+                border: `1px solid ${sheet === tool.id ? "#a8ff3e44" : "#2a2a3a"}`,
+                color: sheet === tool.id ? "#a8ff3e" : "#666677",
+                cursor: "pointer", flexShrink: 0,
+              }}
+            >
+              {tool.icon}
+              <span style={{ fontSize: 8, fontFamily: "Space Grotesk", fontWeight: 600 }}>{tool.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        /* 縦画面: 2段 */
+        <>
+          <div
             style={{
+              flexShrink: 0,
+              background: "#0e0e18",
+              borderTop: "1px solid #1a1a24",
+              padding: "10px 14px",
               display: "flex",
               flexDirection: "column",
-              alignItems: "center",
-              gap: 3,
-              padding: "6px 14px",
-              borderRadius: 8,
-              background: sheet === tool.id ? "#a8ff3e15" : "none",
-              border: `1px solid ${sheet === tool.id ? "#a8ff3e44" : "transparent"}`,
-              color: sheet === tool.id ? "#a8ff3e" : "#666677",
-              cursor: "pointer",
-              flexShrink: 0,
+              gap: 8,
             }}
           >
-            {tool.icon}
-            <span style={{ fontSize: 10, fontFamily: "Space Grotesk", fontWeight: 600 }}>
-              {tool.label}
-            </span>
-          </button>
-        ))}
-      </div>
+            {/* 時間 + ズーム */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{
+                fontFamily: "JetBrains Mono, monospace",
+                fontSize: 13, color: "#a8ff3e", fontWeight: 700,
+              }}>
+                {formatTime(playheadTime)}
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button
+                  onClick={() => setShowGrid(!showGrid)}
+                  style={{
+                    padding: "4px 8px", borderRadius: 6,
+                    background: showGrid ? "#a8ff3e15" : "#1a1a24",
+                    border: `1px solid ${showGrid ? "#a8ff3e44" : "#2a2a3a"}`,
+                    color: showGrid ? "#a8ff3e" : "#4a4a5a",
+                    display: "flex", alignItems: "center", gap: 4,
+                    fontSize: 10, cursor: "pointer",
+                    fontFamily: "Space Grotesk, sans-serif", fontWeight: 600,
+                  }}
+                >
+                  <Grid3x3 size={11} />
+                  8カウント
+                </button>
+                <button
+                  onClick={() => setZoom(Math.max(0.25, zoomLevel - zoomStep(zoomLevel)))}
+                  style={{ padding: 5, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: 6, color: "#9999aa", cursor: "pointer" }}
+                >
+                  <ZoomOut size={13} />
+                </button>
+                <span style={{ fontSize: 10, color: "#4a4a5a", minWidth: 36, textAlign: "center", fontFamily: "JetBrains Mono" }}>
+                  {zoomLevel < 10 ? zoomLevel.toFixed(1) : Math.round(zoomLevel)}×
+                </span>
+                <button
+                  onClick={() => setZoom(Math.min(64, zoomLevel + zoomStep(zoomLevel)))}
+                  style={{ padding: 5, background: "#1a1a24", border: "1px solid #2a2a3a", borderRadius: 6, color: "#9999aa", cursor: "pointer" }}
+                >
+                  <ZoomIn size={13} />
+                </button>
+              </div>
+            </div>
+
+            {/* トランスポートボタン */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                onClick={handleStop}
+                style={{
+                  width: btnH, height: btnH, borderRadius: btnR,
+                  background: "#1a1a24", border: "1px solid #2a2a3a",
+                  color: "#9999aa", display: "flex", alignItems: "center",
+                  justifyContent: "center", cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                <SkipBack size={16} />
+              </button>
+
+              <motion.button
+                onClick={handlePlay}
+                whileTap={{ scale: 0.93 }}
+                style={{
+                  flex: 1, height: btnH, borderRadius: btnR,
+                  background: isPlaying
+                    ? "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)"
+                    : "linear-gradient(135deg, #ffffff22, #ffffff11)",
+                  border: `1.5px solid ${isPlaying ? "#ff6b2b88" : "#333344"}`,
+                  color: isPlaying ? "#ff6b2b" : "white",
+                  fontFamily: "Space Grotesk, sans-serif",
+                  fontWeight: 700, fontSize: 14,
+                  display: "flex", alignItems: "center",
+                  justifyContent: "center", gap: 6, cursor: "pointer",
+                }}
+              >
+                {isPlaying ? <><Square size={14} fill="currentColor" /> 停止</> : <><Play size={14} fill="currentColor" /> 再生</>}
+              </motion.button>
+
+              <motion.button
+                onClick={handleSync}
+                disabled={!hasAudio}
+                whileTap={{ scale: 0.93 }}
+                animate={syncFlash ? { scale: [1, 1.08, 1] } : {}}
+                style={{
+                  width: 56, height: btnH, borderRadius: btnR, flexShrink: 0,
+                  background: syncFlash
+                    ? "linear-gradient(135deg, #a8ff3e, #00f5ff)"
+                    : hasAudio ? "#a8ff3e22" : "#0a0a0f",
+                  border: `1.5px solid ${hasAudio ? "#a8ff3e66" : "#1a1a24"}`,
+                  color: hasAudio ? "#a8ff3e" : "#2a2a3a",
+                  display: "flex", flexDirection: "column", alignItems: "center",
+                  justifyContent: "center", cursor: hasAudio ? "pointer" : "default",
+                  gap: 1,
+                }}
+              >
+                <Zap size={15} style={{ fill: hasAudio && !syncFlash ? "#a8ff3e" : syncFlash ? "#000" : "#2a2a3a" }}
+                  color={syncFlash ? "#000" : undefined} />
+                <span style={{ fontSize: 8, fontFamily: "Space Grotesk", fontWeight: 700,
+                  color: syncFlash ? "#000" : hasAudio ? "#a8ff3e" : "#2a2a3a" }}>
+                  SYNC
+                </span>
+              </motion.button>
+            </div>
+          </div>
+
+          {/* ── Bottom toolbar ── */}
+          <div
+            style={{
+              flexShrink: 0,
+              background: "#0a0a0f",
+              borderTop: "1px solid #1a1a24",
+              display: "flex",
+              alignItems: "center",
+              overflowX: "auto",
+              gap: 4,
+              padding: "10px 8px",
+              paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))",
+            }}
+          >
+            {[
+              { id: "fx" as const, label: "FX", icon: <Sparkles size={18} /> },
+              { id: "sfx" as const, label: "効果音", icon: <Music2 size={18} /> },
+              { id: "settings" as const, label: "設定", icon: <Volume2 size={18} /> },
+            ].map((tool) => (
+              <button
+                key={tool.id}
+                onClick={() => toggleSheet(tool.id)}
+                style={{
+                  display: "flex", flexDirection: "column",
+                  alignItems: "center", gap: 3,
+                  padding: "6px 14px", borderRadius: 8,
+                  background: sheet === tool.id ? "#a8ff3e15" : "none",
+                  border: `1px solid ${sheet === tool.id ? "#a8ff3e44" : "transparent"}`,
+                  color: sheet === tool.id ? "#a8ff3e" : "#666677",
+                  cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                {tool.icon}
+                <span style={{ fontSize: 10, fontFamily: "Space Grotesk", fontWeight: 600 }}>
+                  {tool.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* ── Bottom Sheets ── */}
       <AnimatePresence>
         {sheet && (
           <>
-            {/* Backdrop */}
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setSheet(null)}
-              style={{
-                position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
-                zIndex: 40,
-              }}
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 40 }}
             />
-            {/* Sheet */}
             <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 28, stiffness: 300 }}
               style={{
-                position: "fixed",
-                bottom: 0,
-                left: "50%",
+                position: "fixed", bottom: 0, left: "50%",
                 transform: "translateX(-50%)",
-                width: "100%",
-                maxWidth: 480,
+                width: "100%", maxWidth: 480,
                 background: "#111118",
                 borderRadius: "20px 20px 0 0",
-                border: "1px solid #1a1a24",
-                borderBottom: "none",
-                zIndex: 50,
-                maxHeight: "60vh",
-                overflowY: "auto",
+                border: "1px solid #1a1a24", borderBottom: "none",
+                zIndex: 50, maxHeight: "60vh", overflowY: "auto",
               }}
             >
-              {/* Handle */}
               <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
                 <div style={{ width: 36, height: 4, borderRadius: 999, background: "#2a2a3a" }} />
               </div>

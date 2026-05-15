@@ -5,9 +5,10 @@ import { audioEngine } from "../lib/audioEngine";
 type Props = {
   onSync: () => void;
   syncFlash: boolean;
+  isLandscape?: boolean;
 };
 
-export default function MasterBpmBar({ onSync, syncFlash }: Props) {
+export default function MasterBpmBar({ onSync, syncFlash, isLandscape }: Props) {
   const { masterBpm, setMasterBpm, isPlaying, tracks } = useGROOVA();
   const [tapTimes, setTapTimes] = useState<number[]>([]);
   const [editing, setEditing] = useState(false);
@@ -55,7 +56,7 @@ export default function MasterBpmBar({ onSync, syncFlash }: Props) {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        padding: "6px 12px",
+        padding: isLandscape ? "4px 12px" : "10px 14px",
         background: "#0e0e18",
         borderBottom: "1px solid #1a1a24",
         flexShrink: 0,
@@ -90,9 +91,9 @@ export default function MasterBpmBar({ onSync, syncFlash }: Props) {
               outline: "none",
               fontFamily: "JetBrains Mono, monospace",
               fontWeight: 700,
-              fontSize: 20,
+              fontSize: isLandscape ? 16 : 20,
               color: "#a8ff3e",
-              width: 60,
+              width: isLandscape ? 44 : 60,
             }}
           />
         ) : (
@@ -101,11 +102,11 @@ export default function MasterBpmBar({ onSync, syncFlash }: Props) {
             style={{
               fontFamily: "JetBrains Mono, monospace",
               fontWeight: 700,
-              fontSize: 20,
+              fontSize: isLandscape ? 16 : 20,
               color: "#a8ff3e",
               textShadow: "0 0 16px rgba(168,255,62,0.5)",
               cursor: "text",
-              minWidth: 60,
+              minWidth: isLandscape ? 44 : 60,
             }}
           >
             {masterBpm}
