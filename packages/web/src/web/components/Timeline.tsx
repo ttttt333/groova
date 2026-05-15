@@ -59,6 +59,7 @@ export default function Timeline() {
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const animRef = useRef<number>();
   const isDraggingPlayhead = useRef(false);
+  const scrollTargetRef = useRef<number | null>(null); // lerp target for auto-scroll
   const isDraggingTrack = useRef<{ id: string; startX: number; origOffset: number } | null>(null);
   const pinchRef = useRef<{ dist: number; zoom: number } | null>(null);
 
@@ -83,6 +84,7 @@ export default function Timeline() {
   // スクロールリセット
   useEffect(() => {
     if (scrollResetCounter > 0 && scrollRef.current) {
+      scrollTargetRef.current = null;
       scrollRef.current.scrollLeft = 0;
     }
   }, [scrollResetCounter]);
@@ -382,17 +384,29 @@ export default function Timeline() {
       tracks.forEach((t) => drawTrack(t));
       if (rulerCanvas) drawRuler(rulerCanvas);
 
-      // オートスクロール（再生中）
-      if (isPlayingRef.current && scrollRef.current && !isDraggingPlayhead.current) {
+      // オートスクロール（再生中）— lerpで滑らか追従
+      if (scrollRef.current) {
         const container = scrollRef.current;
-        const phX = playheadTimeRef.current * pxPerSecRef.current;
-        const viewLeft = container.scrollLeft;
-        const viewW = container.clientWidth;
-        if (phX > viewLeft + viewW * 0.75) {
-          container.scrollLeft = phX - viewW * 0.25;
+        if (isPlayingRef.current && !isDraggingPlayhead.current) {
+          const phX = playheadTimeRef.current * pxPerSecRef.current;
+          const viewLeft = container.scrollLeft;
+          const viewW = container.clientWidth;
+          // プレイヘッドが右75%を超えたら or 左端より左になったらターゲット更新
+          if (phX > viewLeft + viewW * 0.75 || phX < viewLeft) {
+            scrollTargetRef.current = Math.max(0, phX - viewW * 0.25);
+          }
         }
-        if (phX < viewLeft) {
-          container.scrollLeft = Math.max(0, phX - 20);
+        // ターゲットがあれば lerp で近づく
+        if (scrollTargetRef.current !== null) {
+          const cur = scrollRef.current.scrollLeft;
+          const target = scrollTargetRef.current;
+          const diff = target - cur;
+          if (Math.abs(diff) < 0.5) {
+            scrollRef.current.scrollLeft = target;
+            scrollTargetRef.current = null;
+          } else {
+            scrollRef.current.scrollLeft = cur + diff * 0.12;
+          }
         }
       }
 
@@ -556,6 +570,10 @@ export default function Timeline() {
         {/* 右: スクロール領域 */}
         <div
           ref={scrollRef}
+          onScroll={() => {
+            // 再生中でなければ手動スクロール→lerp target をキャンセル
+            if (!isPlayingRef.current) scrollTargetRef.current = null;
+          }}
           style={{
             flex: 1,
             overflowX: "auto",
