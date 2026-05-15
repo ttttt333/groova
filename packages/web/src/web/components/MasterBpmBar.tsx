@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useGROOVA } from "../lib/store";
+import { audioEngine } from "../lib/audioEngine";
 
 type Props = {
   onSync: () => void;
@@ -7,10 +8,22 @@ type Props = {
 };
 
 export default function MasterBpmBar({ onSync, syncFlash }: Props) {
-  const { masterBpm, setMasterBpm, isPlaying } = useGROOVA();
+  const { masterBpm, setMasterBpm, isPlaying, tracks } = useGROOVA();
   const [tapTimes, setTapTimes] = useState<number[]>([]);
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState(String(masterBpm));
+
+  // 再生中にBPM変更 → 即座にplaybackRate更新
+  useEffect(() => {
+    if (!isPlaying) return;
+    const speeds: Record<string, number> = {};
+    tracks.forEach((t) => {
+      if (t.bpm && t.bpm > 0) {
+        speeds[t.id] = masterBpm / t.bpm;
+      }
+    });
+    audioEngine.updateAllSpeeds(speeds);
+  }, [masterBpm, isPlaying, tracks]);
 
   useEffect(() => {
     if (!editing) setInputVal(String(masterBpm));

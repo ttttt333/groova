@@ -119,7 +119,16 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
   soloedTrack: null,
   audioContext: null,
 
-  setMasterBpm: (bpm) => set({ masterBpm: Math.min(240, Math.max(40, bpm)) }),
+  setMasterBpm: (bpm) => {
+    const clamped = Math.min(240, Math.max(40, bpm));
+    const { tracks } = get();
+    // 全トラックの speed を新BPMに合わせて更新
+    const updatedTracks = tracks.map((t) => {
+      if (!t.bpm || t.bpm === 0) return t;
+      return { ...t, speed: clamped / t.bpm };
+    });
+    set({ masterBpm: clamped, tracks: updatedTracks });
+  },
   setIsPlaying: (v) => set({ isPlaying: v }),
   setCurrentTime: (t) => set({ currentTime: t }),
   setPlayheadTime: (t) => set({ playheadTime: t }),

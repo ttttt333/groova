@@ -156,6 +156,19 @@ class AudioEngine {
     if (nodes) nodes.gainNode.gain.value = volume;
   }
 
+  /** 再生中にトラックの速度をリアルタイム変更 */
+  updateSpeed(trackId: string, speed: number): void {
+    const nodes = this.activeNodes.get(trackId);
+    if (nodes) nodes.source.playbackRate.value = speed;
+  }
+
+  /** 全トラックの速度を一括更新 (BPM変更時) */
+  updateAllSpeeds(trackSpeeds: Record<string, number>): void {
+    for (const [trackId, speed] of Object.entries(trackSpeeds)) {
+      this.updateSpeed(trackId, speed);
+    }
+  }
+
   private startAnimLoop(): void {
     const tick = () => {
       const t = this.getCurrentTime();
