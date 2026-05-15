@@ -6,9 +6,11 @@ type Props = {
   onSync: () => void;
   syncFlash: boolean;
   isLandscape?: boolean;
+  /** ヘッダー内にインライン埋め込みする場合 true — ラッパーdivなしでflex childrenのみ返す */
+  inline?: boolean;
 };
 
-export default function MasterBpmBar({ onSync, syncFlash, isLandscape }: Props) {
+export default function MasterBpmBar({ onSync, syncFlash, isLandscape, inline }: Props) {
   const { masterBpm, setMasterBpm, isPlaying, tracks } = useGROOVA();
   const [tapTimes, setTapTimes] = useState<number[]>([]);
   const [editing, setEditing] = useState(false);
@@ -50,70 +52,60 @@ export default function MasterBpmBar({ onSync, syncFlash, isLandscape }: Props) 
     setEditing(false);
   };
 
-  return (
+  const bpmBox = (
     <div
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        padding: isLandscape ? "4px 12px" : "10px 14px",
-        background: "#0e0e18",
-        borderBottom: "1px solid #1a1a24",
-        flexShrink: 0,
+        gap: 4,
+        background: "#0a0a0f",
+        border: "1px solid #252535",
+        borderRadius: 8,
+        padding: inline ? "3px 8px" : "4px 10px",
+        flex: 1,
+        minWidth: 0,
       }}
     >
-      {/* BPM display / edit */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          background: "#0a0a0f",
-          border: "1px solid #252535",
-          borderRadius: 8,
-          padding: "4px 10px",
-          flex: 1,
-        }}
-      >
-        <span style={{ fontSize: 10, color: "#4a4a5a", fontFamily: "Space Grotesk", flexShrink: 0 }}>
-          BPM
+      <span style={{ fontSize: 10, color: "#4a4a5a", fontFamily: "Space Grotesk", flexShrink: 0 }}>
+        BPM
+      </span>
+      {editing ? (
+        <input
+          autoFocus
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onBlur={handleBpmCommit}
+          onKeyDown={(e) => e.key === "Enter" && handleBpmCommit()}
+          style={{
+            background: "none",
+            border: "none",
+            outline: "none",
+            fontFamily: "JetBrains Mono, monospace",
+            fontWeight: 700,
+            fontSize: inline ? 14 : isLandscape ? 16 : 20,
+            color: "#a8ff3e",
+            width: inline ? 36 : isLandscape ? 44 : 60,
+          }}
+        />
+      ) : (
+        <span
+          onClick={() => setEditing(true)}
+          style={{
+            fontFamily: "JetBrains Mono, monospace",
+            fontWeight: 700,
+            fontSize: inline ? 14 : isLandscape ? 16 : 20,
+            color: "#a8ff3e",
+            textShadow: "0 0 16px rgba(168,255,62,0.5)",
+            cursor: "text",
+            minWidth: inline ? 36 : isLandscape ? 44 : 60,
+          }}
+        >
+          {masterBpm}
         </span>
-        {editing ? (
-          <input
-            autoFocus
-            value={inputVal}
-            onChange={(e) => setInputVal(e.target.value)}
-            onBlur={handleBpmCommit}
-            onKeyDown={(e) => e.key === "Enter" && handleBpmCommit()}
-            style={{
-              background: "none",
-              border: "none",
-              outline: "none",
-              fontFamily: "JetBrains Mono, monospace",
-              fontWeight: 700,
-              fontSize: isLandscape ? 16 : 20,
-              color: "#a8ff3e",
-              width: isLandscape ? 44 : 60,
-            }}
-          />
-        ) : (
-          <span
-            onClick={() => setEditing(true)}
-            style={{
-              fontFamily: "JetBrains Mono, monospace",
-              fontWeight: 700,
-              fontSize: isLandscape ? 16 : 20,
-              color: "#a8ff3e",
-              textShadow: "0 0 16px rgba(168,255,62,0.5)",
-              cursor: "text",
-              minWidth: isLandscape ? 44 : 60,
-            }}
-          >
-            {masterBpm}
-          </span>
-        )}
+      )}
 
-        {/* BPM slider */}
+      {/* BPM slider — インライン時は非表示 */}
+      {!inline && (
         <input
           type="range"
           className="green"
@@ -127,30 +119,58 @@ export default function MasterBpmBar({ onSync, syncFlash, isLandscape }: Props) 
           } as any}
           onChange={(e) => setMasterBpm(parseFloat(e.target.value))}
         />
+      )}
 
-        {/* Beat pulse indicator */}
-        <BeatPulse bpm={masterBpm} isPlaying={isPlaying} />
+      {/* Beat pulse indicator */}
+      <BeatPulse bpm={masterBpm} isPlaying={isPlaying} />
+    </div>
+  );
+
+  const tapBtn = (
+    <button
+      onClick={handleTap}
+      style={{
+        padding: inline ? "4px 8px" : "6px 10px",
+        borderRadius: 8,
+        background: "#1a1a24",
+        border: "1px solid #2a2a3a",
+        color: "#9999aa",
+        fontFamily: "Space Grotesk, sans-serif",
+        fontWeight: 700,
+        fontSize: 11,
+        cursor: "pointer",
+        flexShrink: 0,
+        height: inline ? 28 : 36,
+      }}
+    >
+      TAP
+    </button>
+  );
+
+  if (inline) {
+    // ヘッダー内インライン: ラッパーなし、flex: 1 で残り幅を使う
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+        {bpmBox}
+        {tapBtn}
       </div>
+    );
+  }
 
-      {/* TAP */}
-      <button
-        onClick={handleTap}
-        style={{
-          padding: "6px 10px",
-          borderRadius: 8,
-          background: "#1a1a24",
-          border: "1px solid #2a2a3a",
-          color: "#9999aa",
-          fontFamily: "Space Grotesk, sans-serif",
-          fontWeight: 700,
-          fontSize: 11,
-          cursor: "pointer",
-          flexShrink: 0,
-          height: 36,
-        }}
-      >
-        TAP
-      </button>
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: isLandscape ? "4px 12px" : "10px 14px",
+        background: "#0e0e18",
+        borderBottom: "1px solid #1a1a24",
+        flexShrink: 0,
+      }}
+    >
+      {bpmBox}
+      {tapBtn}
     </div>
   );
 }

@@ -103,58 +103,71 @@ export default function GROOVAApp() {
         style={{
           display: "flex",
           alignItems: "center",
+          gap: isLandscape ? 8 : 0,
           justifyContent: "space-between",
-          padding: isLandscape ? "6px 14px" : "77px 16px 12px",
+          padding: isLandscape ? "5px 10px" : "77px 16px 12px",
           background: "rgba(10,10,15,0.95)",
           borderBottom: "1px solid #1a1a24",
           flexShrink: 0,
           zIndex: 10,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {/* ロゴ */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           <div
             style={{
-              width: 28, height: 28, borderRadius: 8,
+              width: isLandscape ? 22 : 28, height: isLandscape ? 22 : 28, borderRadius: 8,
               background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >
-            <span style={{ fontWeight: 900, fontSize: 14, color: "#000", fontFamily: "Space Grotesk" }}>G</span>
+            <span style={{ fontWeight: 900, fontSize: isLandscape ? 11 : 14, color: "#000", fontFamily: "Space Grotesk" }}>G</span>
           </div>
-          <span
-            style={{
-              fontFamily: "Space Grotesk, sans-serif",
-              fontWeight: 800,
-              fontSize: isLandscape ? 16 : 20,
-              letterSpacing: -0.5,
-              background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}
-          >
-            GROOVA
-          </span>
+          {!isLandscape && (
+            <span
+              style={{
+                fontFamily: "Space Grotesk, sans-serif",
+                fontWeight: 800,
+                fontSize: 20,
+                letterSpacing: -0.5,
+                background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+              }}
+            >
+              GROOVA
+            </span>
+          )}
         </div>
+
+        {/* 横向き時: BPMバーをヘッダー内にインライン表示 */}
+        {isLandscape && (
+          <MasterBpmBar onSync={handleSync} syncFlash={syncFlash} isLandscape={true} inline={true} />
+        )}
 
         <button
           onClick={() => toggleSheet("export")}
           style={{
-            padding: isLandscape ? "4px 12px" : "6px 16px",
+            padding: isLandscape ? "4px 10px" : "6px 16px",
             borderRadius: 999,
             background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
             border: "none", color: "#000",
             fontFamily: "Space Grotesk, sans-serif",
-            fontWeight: 700, fontSize: 13, cursor: "pointer",
-            display: "flex", alignItems: "center", gap: 5,
+            fontWeight: 700, fontSize: 12, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 4,
+            flexShrink: 0,
           }}
         >
-          <Download size={13} />
-          書き出し
+          <Download size={12} />
+          {!isLandscape && "書き出し"}
+          {isLandscape && "書き出し"}
         </button>
       </header>
 
-      {/* ── Master BPM bar ── */}
-      <MasterBpmBar onSync={handleSync} syncFlash={syncFlash} isLandscape={isLandscape} />
+      {/* ── Master BPM bar (縦向き時のみ) ── */}
+      {!isLandscape && (
+        <MasterBpmBar onSync={handleSync} syncFlash={syncFlash} isLandscape={false} />
+      )}
 
       {/* ── Timeline ── */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
