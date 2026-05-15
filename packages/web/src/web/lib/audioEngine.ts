@@ -70,6 +70,11 @@ class AudioEngine {
    * 非同期処理の中でContextが確実にrunning状態になるまで待つ。
    * タップ外から呼んでもOK（suspendedのままの場合はresumeを試みる）。
    */
+  getContextState(): string {
+    if (!this.ctx) return "none";
+    return this.ctx.state;
+  }
+
   async ensureRunning(): Promise<AudioContext> {
     const ctx = this.getContext();
     if (ctx.state !== "running") {

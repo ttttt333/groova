@@ -25,16 +25,25 @@ export default function GROOVAApp() {
 
   const [sheet, setSheet] = useState<BottomSheet>(null);
   const [syncFlash, setSyncFlash] = useState(false);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+
+  const addLog = (msg: string) => {
+    const time = new Date().toISOString().slice(11, 23);
+    setDebugLog(prev => [`[${time}] ${msg}`, ...prev].slice(0, 8));
+  };
 
   const handlePlay = () => {
     if (isPlaying) {
       audioEngine.stop();
       setIsPlaying(false);
+      addLog("STOP");
     } else {
-      // iOS: async禁止。タップの同期コンテキストのまま全処理を実行する。
-      // awaitを使うとiOSがユーザータップとみなさなくなりAudioContextがアンロックされない。
-      audioEngine.unlockContext(); // 同期: suspend解除 + 無音バッファ再生
-      audioEngine.play(playheadTime); // play()内部でsuspended対応済み
+      const tracksWithAudio = tracks.filter(t => t.audioBuffer);
+      addLog(`PLAY tap | tracks=${tracks.length} withAudio=${tracksWithAudio.length}`);
+      audioEngine.unlockContext();
+      const ctxState = audioEngine.getContextState();
+      addLog(`ctx.state=${ctxState}`);
+      audioEngine.play(playheadTime);
       setIsPlaying(true);
     }
   };
@@ -134,6 +143,25 @@ export default function GROOVAApp() {
           書き出し
         </button>
       </header>
+
+      {/* ── DEBUG PANEL (一時的) ── */}
+      {debugLog.length > 0 && (
+        <div
+          style={{
+            background: "#0a0a0f",
+            borderBottom: "1px solid #1a1a24",
+            padding: "4px 10px",
+            flexShrink: 0,
+          }}
+          onClick={() => setDebugLog([])}
+        >
+          {debugLog.map((l, i) => (
+            <div key={i} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, color: i === 0 ? "#a8ff3e" : "#444466", lineHeight: 1.5 }}>
+              {l}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Master BPM bar ── */}
       <MasterBpmBar onSync={handleSync} syncFlash={syncFlash} />
