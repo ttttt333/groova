@@ -104,7 +104,7 @@ export default function GROOVAApp() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: isLandscape ? "6px 14px" : "14px 16px 12px",
+          padding: isLandscape ? "6px 14px" : "24px 16px 12px",
           background: "rgba(10,10,15,0.95)",
           borderBottom: "1px solid #1a1a24",
           flexShrink: 0,
