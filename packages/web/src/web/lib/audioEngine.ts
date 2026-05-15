@@ -2,6 +2,11 @@
  * GROOVA Audio Engine
  * Handles playback, sync, speed changes with pitch preservation
  * Uses Web Audio API — all processing on device
+ *
+ * iOS Silent Mode workaround:
+ *   HTMLAudioElement で一度でも音を鳴らすと、以降 Web Audio API が
+ *   サイレントモードでも「メディア再生」カテゴリに昇格する。
+ *   unlockContext() 内で data-URI の無音 mp3 を再生してこれを実現。
  */
 
 import { useGROOVA } from "./store";
@@ -11,6 +16,12 @@ export type PlaybackNodes = {
   gainNode: GainNode;
 };
 
+// 極小の無音 mp3 (< 200 bytes) — iOS で media playback session を開始するため
+const SILENCE_MP3 =
+  "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRBqMAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
+
+let silenceUnlocked = false;
+
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private activeNodes: Map<string, PlaybackNodes> = new Map();
@@ -18,12 +29,6 @@ class AudioEngine {
   private startedAt = 0;
   private offsetAt = 0;
   private animFrame: number | null = null;
-  public onDebugLog: ((msg: string) => void) | null = null;
-
-  private log(msg: string) {
-    console.log("[GROOVA]", msg);
-    this.onDebugLog?.(msg);
-  }
 
   getContext(): AudioContext {
     if (!this.ctx) {
@@ -35,50 +40,40 @@ class AudioEngine {
   }
 
   /**
-   * 非同期処理内でContextを取得する場合に使う。
-   * すでにContextが存在すればそのまま返す（新規作成しない）。
-   * 存在しない場合はgetContext()で作成する（suspended状態になるが
-   * unlockContext()が事前に呼ばれていれば問題ない）。
-   */
-  getExistingContext(): AudioContext {
-    return this.getContext();
-  }
-
-  /**
-   * iOS Safari対応: ユーザータップの同期コンテキストで呼ぶことで
-   * AudioContextをアンロックする。
-   * CRITICAL: この関数はasync/awaitを使わない。awaitするとiOSのタップ同期コンテキストが切れる。
+   * iOS Safari 対応 — ユーザータップの同期コンテキストで呼ぶこと。
+   *  1) AudioContext.resume()
+   *  2) 無音 AudioBufferSourceNode を再生 (AudioContext unlock)
+   *  3) HTMLAudioElement で無音 mp3 を再生 (Silent Mode bypass)
+   * CRITICAL: async/await 禁止。iOS はタップ同期が外れると全て無効になる。
    */
   unlockContext(): void {
     const ctx = this.getContext();
-    // resume()を先に呼ぶ（Promiseは無視、同期的に状態変化が始まる）
+
+    // 1) resume
     ctx.resume().catch(() => {});
-    // iOS Safari用: 無音バッファを即時再生してアンロック（state問わず毎回実行）
+
+    // 2) 無音バッファ再生 — AudioContext unlock
     try {
       const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
       const src = ctx.createBufferSource();
       src.buffer = buf;
       src.connect(ctx.destination);
       src.start(0);
-      src.onended = () => { src.disconnect(); };
+      src.onended = () => src.disconnect();
     } catch {}
-  }
 
-  async resumeContext(): Promise<AudioContext> {
-    const ctx = this.getContext();
-    if (ctx.state === "suspended") {
-      await ctx.resume();
+    // 3) HTMLAudioElement trick — iOS Silent Mode bypass
+    //    一度だけ実行すればOK。以降 Web Audio API は media category になる。
+    if (!silenceUnlocked) {
+      try {
+        const audio = new Audio(SILENCE_MP3);
+        audio.setAttribute("playsinline", "true");
+        audio.volume = 0.01;
+        const p = audio.play();
+        if (p) p.catch(() => {});
+        silenceUnlocked = true;
+      } catch {}
     }
-    return ctx;
-  }
-
-  /**
-   * 非同期処理の中でContextが確実にrunning状態になるまで待つ。
-   * タップ外から呼んでもOK（suspendedのままの場合はresumeを試みる）。
-   */
-  getContextState(): string {
-    if (!this.ctx) return "none";
-    return this.ctx.state;
   }
 
   async ensureRunning(): Promise<AudioContext> {
@@ -89,19 +84,9 @@ class AudioEngine {
     return ctx;
   }
 
-  private isPlaying = false;
-
   play(offsetSeconds = 0): void {
-    // 連打ガード: 再生中なら一度stopしてから再開
-    if (this.isPlaying) {
-      this.stop();
-    }
-    this.isPlaying = true;
-
     const ctx = this.getContext();
     const store = useGROOVA.getState();
-
-    this.log(`play() state=${ctx.state} tracks=${store.tracks.length} audio=${store.tracks.filter(t => t.audioBuffer).length} offset=${offsetSeconds.toFixed(2)}`);
 
     this.stop();
 
@@ -134,12 +119,7 @@ class AudioEngine {
           const remaining = clipDuration - playFrom;
           if (remaining > 0.01) {
             source.start(ctx.currentTime, trimStart + playFrom, remaining);
-            this.log(`started: dur=${bufDuration.toFixed(1)}s rem=${remaining.toFixed(2)}s vol=${gainNode.gain.value}`);
-          } else {
-            this.log(`SKIP: remaining=${remaining.toFixed(3)} too small`);
           }
-        } else {
-          this.log(`SKIP: offset=${offsetSeconds.toFixed(2)} > trimEnd=${trimEnd.toFixed(2)}`);
         }
 
         this.activeNodes.set(track.id, { source, gainNode });
@@ -156,7 +136,6 @@ class AudioEngine {
   }
 
   stop(): void {
-    this.isPlaying = false;
     this.activeNodes.forEach(({ source }) => {
       try { source.stop(); } catch {}
     });

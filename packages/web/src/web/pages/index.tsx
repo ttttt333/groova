@@ -25,16 +25,6 @@ export default function GROOVAApp() {
 
   const [sheet, setSheet] = useState<BottomSheet>(null);
   const [syncFlash, setSyncFlash] = useState(false);
-  const [debugLog, setDebugLog] = useState<string[]>([]);
-
-  // audioEngineのログをUI上に表示
-  useEffect(() => {
-    audioEngine.onDebugLog = (msg: string) => {
-      const time = new Date().toISOString().slice(11, 23);
-      setDebugLog(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10));
-    };
-    return () => { audioEngine.onDebugLog = null; };
-  }, []);
 
   const lastPlayTap = useRef(0);
   const handlePlay = () => {
@@ -148,25 +138,6 @@ export default function GROOVAApp() {
           書き出し
         </button>
       </header>
-
-      {/* ── DEBUG PANEL (一時的) ── */}
-      {debugLog.length > 0 && (
-        <div
-          style={{
-            background: "#0a0a0f",
-            borderBottom: "1px solid #1a1a24",
-            padding: "4px 10px",
-            flexShrink: 0,
-          }}
-          onClick={() => setDebugLog([])}
-        >
-          {debugLog.map((l, i) => (
-            <div key={i} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, color: i === 0 ? "#a8ff3e" : "#444466", lineHeight: 1.5 }}>
-              {l}
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* ── Master BPM bar ── */}
       <MasterBpmBar onSync={handleSync} syncFlash={syncFlash} />
