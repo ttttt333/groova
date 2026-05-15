@@ -20,7 +20,7 @@ export default function GROOVAApp() {
   const {
     isPlaying, setIsPlaying, masterBpm, zoomLevel, setZoom,
     playheadTime, setPlayheadTime, tracks, showGrid, setShowGrid,
-    syncAllToBpm,
+    syncAllToBpm, resetScroll,
   } = useGROOVA();
 
   const [sheet, setSheet] = useState<BottomSheet>(null);
@@ -47,6 +47,7 @@ export default function GROOVAApp() {
     audioEngine.stop();
     setIsPlaying(false);
     setPlayheadTime(0);
+    resetScroll();
   };
 
   const handleSync = () => {

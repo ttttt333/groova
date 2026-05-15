@@ -80,6 +80,7 @@ export default function Timeline() {
   const {
     tracks, updateTrack, masterBpm, showGrid, playheadTime,
     setPlayheadTime, isPlaying, zoomLevel, addTrack, setMasterBpm,
+    scrollResetCounter,
   } = useGROOVA();
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -107,6 +108,13 @@ export default function Timeline() {
     })
   );
   const totalWidth = Math.max(maxDuration * pxPerSec + LABEL_WIDTH + 200, 800);
+
+  // スクロールリセット（⏮ボタン）
+  useEffect(() => {
+    if (scrollResetCounter > 0 && scrollRef.current) {
+      scrollRef.current.scrollLeft = 0;
+    }
+  }, [scrollResetCounter]);
 
   // BPM検出時にトーストを表示
   useEffect(() => {

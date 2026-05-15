@@ -49,6 +49,7 @@ export type GROOVAState = {
   activeTab: "tracks" | "fx" | "sfx" | "export";
   soloedTrack: string | null;
   audioContext: AudioContext | null;
+  scrollResetCounter: number;
 
   // Actions
   setMasterBpm: (bpm: number) => void;
@@ -64,6 +65,7 @@ export type GROOVAState = {
   setShowGrid: (v: boolean) => void;
   setActiveTab: (t: GROOVAState["activeTab"]) => void;
   setSoloedTrack: (id: string | null) => void;
+  resetScroll: () => void;
   addMarker: (m: Marker) => void;
   removeMarker: (id: string) => void;
   addSFX: (sfx: SFXClip) => void;
@@ -118,6 +120,7 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
   activeTab: "tracks",
   soloedTrack: null,
   audioContext: null,
+  scrollResetCounter: 0,
 
   setMasterBpm: (bpm) => {
     const clamped = Math.min(240, Math.max(40, bpm));
@@ -161,6 +164,7 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
   setShowGrid: (v) => set({ showGrid: v }),
   setActiveTab: (t) => set({ activeTab: t }),
   setSoloedTrack: (id) => set({ soloedTrack: id }),
+  resetScroll: () => set((s) => ({ scrollResetCounter: s.scrollResetCounter + 1 })),
 
   addMarker: (m) => set((s) => ({ markers: [...s.markers, m] })),
   removeMarker: (id) =>
