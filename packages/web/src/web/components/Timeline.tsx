@@ -9,7 +9,6 @@ const RULER_HEIGHT = 32;
 const LABEL_WIDTH = 52;
 const PIXELS_PER_SEC_BASE = 80;
 
-/** BPM検出完了トースト */
 function BpmToast({ bpm, trackName, color, onDone }: {
   bpm: number; trackName: string; color: string; onDone: () => void;
 }) {
@@ -17,7 +16,6 @@ function BpmToast({ bpm, trackName, color, onDone }: {
     const timer = setTimeout(onDone, 2500);
     return () => clearTimeout(timer);
   }, [onDone]);
-
   return (
     <motion.div
       initial={{ opacity: 0, y: -30, scale: 0.9 }}
@@ -25,45 +23,18 @@ function BpmToast({ bpm, trackName, color, onDone }: {
       exit={{ opacity: 0, y: -20, scale: 0.9 }}
       transition={{ type: "spring", damping: 20, stiffness: 300 }}
       style={{
-        position: "absolute",
-        top: 8,
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 100,
-        background: "#111118ee",
-        border: `1.5px solid ${color}66`,
-        borderRadius: 12,
-        padding: "8px 16px",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        backdropFilter: "blur(8px)",
-        boxShadow: `0 4px 20px ${color}22`,
+        position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)",
+        zIndex: 100, background: "#111118ee", border: `1.5px solid ${color}66`,
+        borderRadius: 12, padding: "8px 16px", display: "flex", alignItems: "center",
+        gap: 10, backdropFilter: "blur(8px)", boxShadow: `0 4px 20px ${color}22`,
       }}
     >
-      <span style={{
-        fontFamily: "JetBrains Mono, monospace",
-        fontWeight: 800,
-        fontSize: 28,
-        color,
-        textShadow: `0 0 20px ${color}88`,
-        lineHeight: 1,
-      }}>
+      <span style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 800, fontSize: 28, color, textShadow: `0 0 20px ${color}88`, lineHeight: 1 }}>
         {bpm}
       </span>
       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <span style={{
-          fontSize: 10, color: "#888899",
-          fontFamily: "Space Grotesk, sans-serif", fontWeight: 600,
-        }}>
-          BPM 検出
-        </span>
-        <span style={{
-          fontSize: 11, color: "#ccccdd",
-          fontFamily: "Space Grotesk, sans-serif", fontWeight: 500,
-        }}>
-          {trackName}
-        </span>
+        <span style={{ fontSize: 10, color: "#888899", fontFamily: "Space Grotesk, sans-serif", fontWeight: 600 }}>BPM 検出</span>
+        <span style={{ fontSize: 11, color: "#ccccdd", fontFamily: "Space Grotesk, sans-serif", fontWeight: 500 }}>{trackName}</span>
       </div>
     </motion.div>
   );
@@ -84,6 +55,7 @@ export default function Timeline() {
   } = useGROOVA();
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rulerDragRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const animRef = useRef<number>();
   const isDraggingPlayhead = useRef(false);
@@ -95,6 +67,9 @@ export default function Timeline() {
   const prevBpmRef = useRef<Record<string, number | null>>({});
   const pxPerSec = PIXELS_PER_SEC_BASE * zoomLevel;
 
+  // 一番上の音源ありトラック
+  const topAudioTrack = tracks.find((t) => t.audioBuffer && t.beatPositions?.length > 0) ?? null;
+
   const maxDuration = Math.max(
     30,
     ...tracks.map((t) => {
@@ -103,30 +78,39 @@ export default function Timeline() {
       return off + dur;
     })
   );
-  // canvasの幅 = ラベル幅を除いたタイムライン部分
   const canvasWidth = Math.max(maxDuration * pxPerSec + 200, 600);
 
-  // スクロールリセット（⏮ボタン）
+  // スクロールリセット
   useEffect(() => {
     if (scrollResetCounter > 0 && scrollRef.current) {
       scrollRef.current.scrollLeft = 0;
     }
   }, [scrollResetCounter]);
 
-  // BPM検出時にトーストを表示
+  // BPMトースト
   useEffect(() => {
     tracks.forEach((t) => {
       const prev = prevBpmRef.current[t.id];
-      if (prev === undefined || prev === null) {
-        if (t.bpm && t.bpm > 0) {
-          setBpmToast({ bpm: t.bpm, trackName: t.name, color: t.color });
-        }
+      if ((prev === undefined || prev === null) && t.bpm && t.bpm > 0) {
+        setBpmToast({ bpm: t.bpm, trackName: t.name, color: t.color });
       }
       prevBpmRef.current[t.id] = t.bpm;
     });
   }, [tracks]);
 
-  // Draw a single track waveform onto its canvas
+  // refs for animation loop（deps最小化）
+  const playheadTimeRef = useRef(playheadTime);
+  const isPlayingRef = useRef(isPlaying);
+  const pxPerSecRef = useRef(pxPerSec);
+  const showGridRef = useRef(showGrid);
+  const topAudioTrackRef = useRef(topAudioTrack);
+  useEffect(() => { playheadTimeRef.current = playheadTime; }, [playheadTime]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => { pxPerSecRef.current = pxPerSec; }, [pxPerSec]);
+  useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
+  useEffect(() => { topAudioTrackRef.current = topAudioTrack; }, [topAudioTrack]);
+
+  // ── drawTrack ──
   const drawTrack = useCallback(
     (track: TrackState) => {
       const canvas = canvasRefs.current.get(track.id);
@@ -137,7 +121,6 @@ export default function Timeline() {
       const W = canvas.width;
       const H = canvas.height;
       ctx.clearRect(0, 0, W, H);
-
       ctx.fillStyle = "#0d0d14";
       ctx.fillRect(0, 0, W, H);
 
@@ -146,15 +129,14 @@ export default function Timeline() {
       const duration = track.audioBuffer?.duration || 0;
 
       if (waveform && duration > 0) {
-        // clipX はラベルなしのcanvas座標
         const clipX = offset * pxPerSec;
         const clipW = duration * pxPerSec;
 
+        // クリップ背景
         ctx.fillStyle = track.color + "18";
         ctx.beginPath();
         ctx.roundRect(clipX, 2, clipW, H - 4, 4);
         ctx.fill();
-
         ctx.strokeStyle = track.color + "66";
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -164,6 +146,7 @@ export default function Timeline() {
         const samplesPerPx = waveform.length / clipW;
 
         if (samplesPerPx > 1) {
+          // 縮小: min/max エンベロープ
           ctx.beginPath();
           const midY = H / 2;
           const ampScale = (H - 8) * 0.42;
@@ -171,22 +154,16 @@ export default function Timeline() {
             const sStart = Math.floor(px * samplesPerPx);
             const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
             let max = 0;
-            for (let s = sStart; s < sEnd; s++) {
-              if (waveform[s] > max) max = waveform[s];
-            }
+            for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
             const y = midY - max * ampScale;
-            if (px === 0) ctx.moveTo(clipX + px, y);
-            else ctx.lineTo(clipX + px, y);
+            if (px === 0) ctx.moveTo(clipX + px, y); else ctx.lineTo(clipX + px, y);
           }
           for (let px = Math.floor(clipW) - 1; px >= 0; px--) {
             const sStart = Math.floor(px * samplesPerPx);
             const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
             let max = 0;
-            for (let s = sStart; s < sEnd; s++) {
-              if (waveform[s] > max) max = waveform[s];
-            }
-            const y = midY + max * ampScale;
-            ctx.lineTo(clipX + px, y);
+            for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
+            ctx.lineTo(clipX + px, midY + max * ampScale);
           }
           ctx.closePath();
           ctx.fillStyle = track.color + "bb";
@@ -195,59 +172,90 @@ export default function Timeline() {
           ctx.lineWidth = 0.5;
           ctx.stroke();
         } else {
+          // 拡大: バー描画
           const pxPerSample = clipW / waveform.length;
           const barW = Math.max(1, pxPerSample - (pxPerSample > 3 ? 1 : 0));
           const scrollLeft = scrollRef.current?.scrollLeft || 0;
           const viewWidth = scrollRef.current?.clientWidth || clipW;
-          // scrollLeft はラベルなしcanvas内の座標と一致
           const visStart = Math.max(0, Math.floor(((scrollLeft - clipX) / clipW) * waveform.length) - 2);
           const visEnd = Math.min(waveform.length, Math.ceil(((scrollLeft + viewWidth - clipX) / clipW) * waveform.length) + 2);
-
           ctx.fillStyle = track.color + "dd";
           const midY = H / 2;
           const ampScale = (H - 8) * 0.42;
           for (let i = visStart; i < visEnd; i++) {
             const amp = waveform[i];
             const barH = amp * ampScale * 2;
-            const x = clipX + i * pxPerSample;
-            ctx.fillRect(x, midY - barH / 2, barW, barH);
+            ctx.fillRect(clipX + i * pxPerSample, midY - barH / 2, barW, barH);
           }
           ctx.strokeStyle = track.color + "44";
           ctx.lineWidth = 0.5;
           ctx.beginPath();
-          ctx.moveTo(clipX, midY);
-          ctx.lineTo(clipX + clipW, midY);
+          ctx.moveTo(clipX, H / 2);
+          ctx.lineTo(clipX + clipW, H / 2);
           ctx.stroke();
         }
 
+        // トラック名
         ctx.fillStyle = track.color + "99";
         ctx.font = "bold 9px Space Grotesk, sans-serif";
         ctx.fillText(track.name, clipX + 6, H - 6);
 
+        // BPM表示
         if (track.bpm) {
           ctx.fillStyle = track.color;
           ctx.font = "bold 9px JetBrains Mono, monospace";
           ctx.fillText(`${track.bpm}`, clipX + 6, 14);
         }
 
+        // トリムハンドル
         const trimStartX = clipX + (track.trimStart / duration) * clipW;
         const trimEndX = clipX + ((track.trimEnd || duration) / duration) * clipW;
-
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(trimStartX - 1, 0, 2, H);
-        ctx.beginPath();
-        ctx.moveTo(trimStartX, 2);
-        ctx.lineTo(trimStartX + 10, 2);
-        ctx.lineTo(trimStartX, 14);
-        ctx.fill();
-
+        ctx.beginPath(); ctx.moveTo(trimStartX, 2); ctx.lineTo(trimStartX + 10, 2); ctx.lineTo(trimStartX, 14); ctx.fill();
         ctx.fillRect(trimEndX - 1, 0, 2, H);
-        ctx.beginPath();
-        ctx.moveTo(trimEndX, 2);
-        ctx.lineTo(trimEndX - 10, 2);
-        ctx.lineTo(trimEndX, 14);
-        ctx.fill();
+        ctx.beginPath(); ctx.moveTo(trimEndX, 2); ctx.lineTo(trimEndX - 10, 2); ctx.lineTo(trimEndX, 14); ctx.fill();
+
+        // ── 8カウントマーカー（一番上のトラックのみ・showGrid ON時） ──
+        if (showGridRef.current) {
+          const top = topAudioTrackRef.current;
+          if (top && top.id === track.id && top.beatPositions?.length > 0) {
+            const beats = top.beatPositions;
+            const topOffset = trackOffsets[top.id] || 0;
+            beats.forEach((beatTime, i) => {
+              if (i % 8 !== 0) return; // 8拍ごとのみ
+              const countNum = Math.floor(i / 8) + 1;
+              const bx = (topOffset + beatTime) * pxPerSec;
+              if (bx < 0 || bx > W) return;
+
+              // 縦線（全体高さ）
+              ctx.strokeStyle = "#a8ff3ecc";
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([]);
+              ctx.beginPath();
+              ctx.moveTo(bx, 0);
+              ctx.lineTo(bx, H);
+              ctx.stroke();
+
+              // 上部三角マーカー
+              ctx.fillStyle = "#a8ff3e";
+              ctx.beginPath();
+              ctx.moveTo(bx - 5, 0);
+              ctx.lineTo(bx + 5, 0);
+              ctx.lineTo(bx, 8);
+              ctx.closePath();
+              ctx.fill();
+
+              // カウント番号
+              ctx.fillStyle = "#a8ff3e";
+              ctx.font = "bold 8px JetBrains Mono, monospace";
+              ctx.fillText(String(countNum), bx + 3, 20);
+            });
+          }
+        }
+
       } else {
+        // 空トラック
         ctx.strokeStyle = "#2a2a3a";
         ctx.lineWidth = 1;
         ctx.setLineDash([6, 4]);
@@ -260,6 +268,7 @@ export default function Timeline() {
         ctx.textAlign = "left";
       }
 
+      // 解析アニメ
       if (track.isAnalyzing) {
         const scanX = ((Date.now() % 2000) / 2000) * W;
         const grad = ctx.createLinearGradient(scanX - 40, 0, scanX + 40, 0);
@@ -270,8 +279,8 @@ export default function Timeline() {
         ctx.fillRect(scanX - 40, 0, 80, H);
       }
 
-      // Playhead（canvas座標 = ラベルなし）
-      const phX = playheadTime * pxPerSec;
+      // プレイヘッド
+      const phX = playheadTimeRef.current * pxPerSecRef.current;
       if (phX >= 0 && phX <= W) {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1.5;
@@ -283,10 +292,10 @@ export default function Timeline() {
         ctx.globalAlpha = 1;
       }
     },
-    [trackOffsets, pxPerSec, playheadTime]
+    [trackOffsets, pxPerSec]
   );
 
-  // Draw ruler canvas
+  // ── drawRuler ──
   const drawRuler = useCallback(
     (canvas: HTMLCanvasElement) => {
       const ctx = canvas.getContext("2d");
@@ -294,18 +303,18 @@ export default function Timeline() {
       const W = canvas.width;
       const H = canvas.height;
       ctx.clearRect(0, 0, W, H);
-
       ctx.fillStyle = "#0a0a0f";
       ctx.fillRect(0, 0, W, H);
 
       const stepSec = pxPerSec > 120 ? 1 : pxPerSec > 60 ? 2 : pxPerSec > 30 ? 4 : 8;
       const beatSec = 60 / masterBpm;
 
+      // グリッドライン（BPMベース）
       if (showGrid) {
         let t = 0;
         let beatIdx = 0;
         while (t <= maxDuration) {
-          const x = t * pxPerSec; // ruler canvas はラベル幅なし
+          const x = t * pxPerSec;
           const beat = beatIdx % 8;
           if (beat === 0) {
             ctx.strokeStyle = "rgba(168,255,62,0.5)";
@@ -326,7 +335,7 @@ export default function Timeline() {
         }
       }
 
-      ctx.fillStyle = "#555566";
+      // 時間目盛り
       ctx.font = "9px JetBrains Mono, monospace";
       let t = 0;
       while (t <= maxDuration + stepSec) {
@@ -339,6 +348,19 @@ export default function Timeline() {
         }
         t += stepSec;
       }
+
+      // プレイヘッドのルーラー上のひし形マーカー
+      const phX = playheadTimeRef.current * pxPerSecRef.current;
+      if (phX >= 0 && phX <= W) {
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.moveTo(phX, H - 8);
+        ctx.lineTo(phX + 5, H);
+        ctx.lineTo(phX, H + 4);
+        ctx.lineTo(phX - 5, H);
+        ctx.closePath();
+        ctx.fill();
+      }
     },
     [pxPerSec, maxDuration, showGrid, masterBpm]
   );
@@ -347,40 +369,26 @@ export default function Timeline() {
   useEffect(() => {
     tracks.forEach((t) => {
       const canvas = canvasRefs.current.get(t.id);
-      if (canvas) {
-        if (canvas.width !== canvasWidth) canvas.width = canvasWidth;
-        if (canvas.height !== TRACK_HEIGHT) canvas.height = TRACK_HEIGHT;
-      }
+      if (canvas && canvas.width !== canvasWidth) canvas.width = canvasWidth;
     });
     const ruler = document.getElementById("groova-ruler") as HTMLCanvasElement;
-    if (ruler) {
-      if (ruler.width !== canvasWidth) ruler.width = canvasWidth;
-      if (ruler.height !== RULER_HEIGHT) ruler.height = RULER_HEIGHT;
-    }
-  }, [tracks.length, canvasWidth, zoomLevel]);
+    if (ruler && ruler.width !== canvasWidth) ruler.width = canvasWidth;
+  }, [tracks.length, canvasWidth]);
 
-  // ref で最新値を保持（useEffect の deps から外すため）
-  const playheadTimeRef = useRef(playheadTime);
-  const isPlayingRef = useRef(isPlaying);
-  const pxPerSecRef = useRef(pxPerSec);
-  useEffect(() => { playheadTimeRef.current = playheadTime; }, [playheadTime]);
-  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
-  useEffect(() => { pxPerSecRef.current = pxPerSec; }, [pxPerSec]);
-
-  // Animation loop + autoscroll — deps を最小化してrAF再起動を防ぐ
+  // rAF loop
   useEffect(() => {
     const loop = () => {
       const rulerCanvas = document.getElementById("groova-ruler") as HTMLCanvasElement;
       tracks.forEach((t) => drawTrack(t));
       if (rulerCanvas) drawRuler(rulerCanvas);
 
+      // オートスクロール（再生中）
       if (isPlayingRef.current && scrollRef.current && !isDraggingPlayhead.current) {
         const container = scrollRef.current;
         const phX = playheadTimeRef.current * pxPerSecRef.current;
         const viewLeft = container.scrollLeft;
         const viewW = container.clientWidth;
-        const threshold = viewLeft + viewW * 0.75;
-        if (phX > threshold) {
+        if (phX > viewLeft + viewW * 0.75) {
           container.scrollLeft = phX - viewW * 0.25;
         }
         if (phX < viewLeft) {
@@ -392,27 +400,25 @@ export default function Timeline() {
     };
     animRef.current = requestAnimationFrame(loop);
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
-  }, [tracks, drawTrack, drawRuler]); // playheadTime/isPlaying/pxPerSec を deps から外す
+  }, [tracks, drawTrack, drawRuler]);
 
-  // Playhead DOM position（スクロールコンテンツ内、ラベルなし）
   const playheadX = playheadTime * pxPerSec;
 
-  // Pointer: playhead drag on ruler/canvas scroll area
-  const handleScrollPointerDown = (e: React.PointerEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft || 0);
-    if (x < 0) return;
+  // ── ルーラーのみpointer drag（波形エリアはネイティブスクロール） ──
+  const handleRulerPointerDown = (e: React.PointerEvent) => {
     isDraggingPlayhead.current = true;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft || 0);
     setPlayheadTime(Math.max(0, x / pxPerSec));
   };
-  const handleScrollPointerMove = (e: React.PointerEvent) => {
+  const handleRulerPointerMove = (e: React.PointerEvent) => {
     if (!isDraggingPlayhead.current) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft || 0);
     setPlayheadTime(Math.max(0, x / pxPerSec));
   };
-  const handleScrollPointerUp = () => {
+  const handleRulerPointerUp = () => {
     isDraggingPlayhead.current = false;
   };
 
@@ -430,12 +436,9 @@ export default function Timeline() {
     if (!isDraggingTrack.current) return;
     const { id, startX, origOffset } = isDraggingTrack.current;
     const dx = e.clientX - startX;
-    const newOffset = Math.max(0, origOffset + dx / pxPerSec);
-    setTrackOffsets((prev) => ({ ...prev, [id]: newOffset }));
+    setTrackOffsets((prev) => ({ ...prev, [id]: Math.max(0, origOffset + dx / pxPerSec) }));
   };
-  const handleTrackPointerUp = () => {
-    isDraggingTrack.current = null;
-  };
+  const handleTrackPointerUp = () => { isDraggingTrack.current = null; };
 
   // Pinch zoom
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -449,18 +452,15 @@ export default function Timeline() {
     if (e.touches.length === 2 && pinchRef.current) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
-      const ratio = dist / pinchRef.current.dist;
-      const newZoom = Math.max(0.25, Math.min(64, pinchRef.current.zoom * ratio));
-      useGROOVA.getState().setZoom(newZoom);
+      const ratio = Math.hypot(dx, dy) / pinchRef.current.dist;
+      useGROOVA.getState().setZoom(Math.max(0.25, Math.min(64, pinchRef.current.zoom * ratio)));
     }
   };
 
   const handleFileDrop = async (e: React.DragEvent, trackId: string) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (!file) return;
-    loadFile(file, trackId);
+    if (file) loadFile(file, trackId);
   };
 
   const loadFile = async (file: File, trackId: string) => {
@@ -478,9 +478,8 @@ export default function Timeline() {
         beatPositions: result.beatPositions,
         isAnalyzing: false,
       });
-      const { tracks: currentTracks } = useGROOVA.getState();
-      const hasNoMaster = !currentTracks.find((t) => t.id !== trackId && t.bpm);
-      if (hasNoMaster) setMasterBpm(result.bpm);
+      const { tracks: cur } = useGROOVA.getState();
+      if (!cur.find((t) => t.id !== trackId && t.bpm)) setMasterBpm(result.bpm);
     } catch (err) {
       console.error(err);
       updateTrack(trackId, { isAnalyzing: false });
@@ -488,61 +487,39 @@ export default function Timeline() {
   };
 
   const handleDeleteTrack = (trackId: string) => {
-    // トラックのcanvasを削除
     canvasRefs.current.delete(trackId);
-    // trackOffsetsからも削除
-    setTrackOffsets((prev) => {
-      const next = { ...prev };
-      delete next[trackId];
-      return next;
-    });
+    setTrackOffsets((prev) => { const n = { ...prev }; delete n[trackId]; return n; });
     removeTrack(trackId);
   };
 
   return (
     <div
-      className="relative flex flex-col"
-      style={{
-        background: "#0a0a0f",
-        borderTop: "1px solid #1a1a24",
-        flex: 1,
-        minHeight: 0,
-        overflow: "hidden",
-      }}
+      style={{ background: "#0a0a0f", borderTop: "1px solid #1a1a24", flex: 1, minHeight: 0, overflow: "hidden", position: "relative" }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
     >
-      {/* BPM検出トースト */}
       <AnimatePresence>
         {bpmToast && (
           <BpmToast
             key={`${bpmToast.trackName}-${bpmToast.bpm}`}
-            bpm={bpmToast.bpm}
-            trackName={bpmToast.trackName}
-            color={bpmToast.color}
+            bpm={bpmToast.bpm} trackName={bpmToast.trackName} color={bpmToast.color}
             onDone={() => setBpmToast(null)}
           />
         )}
       </AnimatePresence>
 
-      {/* ── レイアウト: ラベル列（固定） + スクロール列 ── */}
-      <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
+      {/* ── ラベル列（固定） + スクロール領域 ── */}
+      <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
 
         {/* 左: ラベル列（スクロールしない） */}
-        <div
-          style={{
-            width: LABEL_WIDTH,
-            flexShrink: 0,
-            display: "flex",
-            flexDirection: "column",
-            borderRight: "1px solid #1a1a24",
-            background: "#0c0c14",
-            zIndex: 5,
-          }}
-        >
-          {/* Ruler label */}
+        <div style={{
+          width: LABEL_WIDTH, flexShrink: 0,
+          display: "flex", flexDirection: "column",
+          borderRight: "1px solid #1a1a24", background: "#0c0c14", zIndex: 5,
+        }}>
+          {/* TIME ラベル */}
           <div style={{
-            height: RULER_HEIGHT,
+            height: RULER_HEIGHT, flexShrink: 0,
             borderBottom: "1px solid #1a1a24",
             display: "flex", alignItems: "center", paddingLeft: 6,
             background: "#0a0a0f",
@@ -551,37 +528,32 @@ export default function Timeline() {
           </div>
 
           {/* Track labels */}
-          {tracks.map((track) => (
-            <TrackLabel
-              key={track.id}
-              track={track}
-              onDelete={() => handleDeleteTrack(track.id)}
-              onFileSelect={(file) => loadFile(file, track.id)}
-            />
-          ))}
-
-          {/* Add track */}
-          {tracks.length < 6 && (
-            <div style={{
-              height: TRACK_HEIGHT,
-              borderTop: "1px solid #1a1a24",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <button
-                onClick={addTrack}
-                style={{
+          <div style={{ flex: 1, overflowY: "hidden" }}>
+            {tracks.map((track) => (
+              <TrackLabel
+                key={track.id}
+                track={track}
+                onDelete={() => handleDeleteTrack(track.id)}
+                onFileSelect={(file) => loadFile(file, track.id)}
+              />
+            ))}
+            {tracks.length < 6 && (
+              <div style={{
+                height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <button onClick={addTrack} style={{
                   width: 24, height: 24, borderRadius: 999,
                   background: "#1a1a24", border: "1px solid #2a2a3a",
                   color: "#a8ff3e", fontSize: 16,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer",
-                }}
-              >+</button>
-            </div>
-          )}
+                  display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                }}>+</button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* 右: スクロール領域（ruler + tracks + playhead） */}
+        {/* 右: スクロール領域 */}
         <div
           ref={scrollRef}
           style={{
@@ -591,29 +563,39 @@ export default function Timeline() {
             scrollbarWidth: "thin",
             scrollbarColor: "#252535 #0a0a0f",
             position: "relative",
+            // タッチスクロールを妨げない
+            touchAction: "pan-x",
           }}
-          onPointerDown={handleScrollPointerDown}
-          onPointerMove={handleScrollPointerMove}
-          onPointerUp={handleScrollPointerUp}
         >
-          {/* コンテンツ幅を確保する wrapper */}
-          <div style={{ width: canvasWidth, position: "relative" }}>
-            {/* Ruler canvas */}
-            <div style={{ height: RULER_HEIGHT }}>
+          <div style={{ width: canvasWidth, position: "relative", minHeight: "100%" }}>
+
+            {/* ルーラー（クリック/ドラッグでplayhead設定） */}
+            <div style={{ height: RULER_HEIGHT, position: "relative", flexShrink: 0 }}>
               <canvas
                 id="groova-ruler"
                 width={canvasWidth}
                 height={RULER_HEIGHT}
                 style={{ display: "block" }}
               />
+              {/* ルーラー上の透明オーバーレイ（playhead drag用） */}
+              <div
+                ref={rulerDragRef}
+                style={{
+                  position: "absolute", inset: 0,
+                  cursor: "col-resize",
+                  touchAction: "none", // ルーラーだけはpointer drag優先
+                }}
+                onPointerDown={handleRulerPointerDown}
+                onPointerMove={handleRulerPointerMove}
+                onPointerUp={handleRulerPointerUp}
+              />
             </div>
 
-            {/* Track canvases */}
-            {tracks.map((track, idx) => (
+            {/* Tracks */}
+            {tracks.map((track) => (
               <TrackCanvas
                 key={track.id}
                 track={track}
-                idx={idx}
                 canvasWidth={canvasWidth}
                 canvasRefs={canvasRefs}
                 onPointerDown={(e) => handleTrackPointerDown(e, track.id)}
@@ -624,33 +606,20 @@ export default function Timeline() {
               />
             ))}
 
-            {/* Add track empty area */}
+            {/* Add track empty */}
             {tracks.length < 6 && (
-              <div style={{
-                height: TRACK_HEIGHT,
-                borderTop: "1px solid #1a1a24",
-                background: "#080810",
-              }} />
+              <div style={{ height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24", background: "#080810" }} />
             )}
 
-            {/* Playhead */}
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: playheadX,
-                width: 2,
-                height: "100%",
-                background: "white",
-                pointerEvents: "none",
-                zIndex: 20,
-              }}
-            >
+            {/* Playhead DOM line */}
+            <div style={{
+              position: "absolute", top: 0, left: playheadX,
+              width: 2, height: "100%", background: "white",
+              pointerEvents: "none", zIndex: 20,
+            }}>
               <div style={{
-                position: "absolute",
-                top: -1, left: -6,
-                width: 14, height: 14,
-                background: "white",
+                position: "absolute", top: -1, left: -6,
+                width: 14, height: 14, background: "white",
                 clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
               }} />
             </div>
@@ -661,10 +630,8 @@ export default function Timeline() {
   );
 }
 
-// ── ラベル列の各行 ──
-function TrackLabel({
-  track, onDelete, onFileSelect,
-}: {
+// ── ラベル列 ──
+function TrackLabel({ track, onDelete, onFileSelect }: {
   track: TrackState;
   onDelete: () => void;
   onFileSelect: (file: File) => void;
@@ -673,7 +640,6 @@ function TrackLabel({
   const { updateTrack } = useGROOVA();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // 削除確認: 1回目タップで赤に、2回目タップで実行、2秒後にリセット
   const handleDeleteTap = () => {
     if (confirmDelete) {
       onDelete();
@@ -685,25 +651,12 @@ function TrackLabel({
 
   return (
     <div style={{
-      height: TRACK_HEIGHT,
-      borderTop: "1px solid #1a1a24",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 3,
-      padding: "4px 2px",
-      position: "relative",
+      height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      gap: 3, padding: "4px 2px",
     }}>
-      {/* カラードット */}
-      <div style={{
-        width: 7, height: 7, borderRadius: "50%",
-        background: track.color,
-        boxShadow: `0 0 6px ${track.color}`,
-        flexShrink: 0,
-      }} />
-
-      {/* ミュートボタン */}
+      <div style={{ width: 7, height: 7, borderRadius: "50%", background: track.color, boxShadow: `0 0 6px ${track.color}`, flexShrink: 0 }} />
       <button
         onClick={() => updateTrack(track.id, { muted: !track.muted })}
         style={{
@@ -714,31 +667,13 @@ function TrackLabel({
           cursor: "pointer", lineHeight: 1.4,
         }}
       >M</button>
-
-      {/* ファイル選択 / 音源あり時は♪ */}
       <button
-        onClick={() => {
-          audioEngine.unlockContext();
-          fileRef.current?.click();
-        }}
-        style={{
-          fontSize: 13, background: "none", border: "none",
-          color: track.audioBuffer ? track.color : "#2a2a3a",
-          cursor: "pointer", padding: 0, lineHeight: 1,
-        }}
+        onClick={() => { audioEngine.unlockContext(); fileRef.current?.click(); }}
+        style={{ fontSize: 13, background: "none", border: "none", color: track.audioBuffer ? track.color : "#2a2a3a", cursor: "pointer", padding: 0, lineHeight: 1 }}
         title="曲を追加"
-      >
-        {track.audioBuffer ? "♪" : "+"}
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg,.aac"
-        style={{ display: "none" }}
-        onChange={(e) => e.target.files?.[0] && onFileSelect(e.target.files[0])}
-      />
-
-      {/* 削除ボタン（音源読み込み済み時のみ表示） */}
+      >{track.audioBuffer ? "♪" : "+"}</button>
+      <input ref={fileRef} type="file" accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg,.aac" style={{ display: "none" }}
+        onChange={(e) => e.target.files?.[0] && onFileSelect(e.target.files[0])} />
       {track.audioBuffer && (
         <button
           onClick={handleDeleteTap}
@@ -748,24 +683,17 @@ function TrackLabel({
             background: confirmDelete ? "#ff000033" : "#1a1a24",
             border: `1px solid ${confirmDelete ? "#ff0000aa" : "#2a2a3a"}`,
             color: confirmDelete ? "#ff4444" : "#4a4a5a",
-            cursor: "pointer", lineHeight: 1.4,
-            transition: "all 0.15s",
+            cursor: "pointer", lineHeight: 1.4, transition: "all 0.15s",
           }}
-        >
-          {confirmDelete ? "確認" : "削除"}
-        </button>
+        >{confirmDelete ? "確認" : "削除"}</button>
       )}
     </div>
   );
 }
 
-// ── Canvas列の各行 ──
-function TrackCanvas({
-  track, idx, canvasWidth, canvasRefs,
-  onPointerDown, onPointerMove, onPointerUp, onDrop, onFileSelect,
-}: {
+// ── Canvas列 ──
+function TrackCanvas({ track, canvasWidth, canvasRefs, onPointerDown, onPointerMove, onPointerUp, onDrop, onFileSelect }: {
   track: TrackState;
-  idx: number;
   canvasWidth: number;
   canvasRefs: React.MutableRefObject<Map<string, HTMLCanvasElement>>;
   onPointerDown: (e: React.PointerEvent) => void;
@@ -777,26 +705,19 @@ function TrackCanvas({
   const fileRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div style={{
-      height: TRACK_HEIGHT,
-      borderTop: "1px solid #1a1a24",
-      position: "relative",
-    }}>
+    <div style={{ height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24", position: "relative" }}>
       <canvas
         ref={(el) => {
           if (el) {
             const isNew = !canvasRefs.current.get(track.id);
             canvasRefs.current.set(track.id, el);
-            // 初回マウント時のみサイズ設定（再レンダリングで上書きしない）
-            if (isNew) {
-              el.width = canvasWidth;
-              el.height = TRACK_HEIGHT;
-            }
+            if (isNew) { el.width = canvasWidth; el.height = TRACK_HEIGHT; }
           }
         }}
         style={{
-          width: "100%", height: "100%",
-          display: "block", touchAction: "none",
+          width: "100%", height: "100%", display: "block",
+          // クリップドラッグはpointerで、スクロールはブラウザのpan-xに任せる
+          touchAction: track.audioBuffer ? "none" : "pan-x",
           cursor: track.audioBuffer ? "grab" : "default",
           pointerEvents: track.audioBuffer ? "auto" : "none",
         }}
@@ -807,50 +728,25 @@ function TrackCanvas({
         onDrop={onDrop}
       />
 
-      {/* 音源未読み込み時のオーバーレイ */}
       {!track.audioBuffer && !track.isAnalyzing && (
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            audioEngine.unlockContext();
-            fileRef.current?.click();
-          }}
+          onClick={(e) => { e.stopPropagation(); audioEngine.unlockContext(); fileRef.current?.click(); }}
           style={{
-            position: "absolute", inset: 0,
-            width: "100%", height: "100%",
-            background: "transparent", border: "none",
-            cursor: "pointer",
-            display: "flex", alignItems: "center",
-            justifyContent: "flex-start",
-            paddingLeft: 16, gap: 8,
-            color: "#4a4a6a", zIndex: 2,
+            position: "absolute", inset: 0, width: "100%", height: "100%",
+            background: "transparent", border: "none", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "flex-start",
+            paddingLeft: 16, gap: 8, color: "#4a4a6a", zIndex: 2,
           }}
         >
-          <span style={{
-            width: 28, height: 28, borderRadius: "50%",
-            border: "1.5px dashed #3a3a5a",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 18, lineHeight: 1, color: "#5a5a7a", flexShrink: 0,
-          }}>+</span>
+          <span style={{ width: 28, height: 28, borderRadius: "50%", border: "1.5px dashed #3a3a5a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, lineHeight: 1, color: "#5a5a7a", flexShrink: 0 }}>+</span>
           <span style={{ fontSize: 12, letterSpacing: "0.02em" }}>音源を読み込む</span>
         </button>
       )}
-      <input
-        ref={fileRef}
-        type="file"
-        accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg,.aac"
-        style={{ display: "none" }}
-        onChange={(e) => e.target.files?.[0] && onFileSelect(e.target.files[0])}
-      />
+      <input ref={fileRef} type="file" accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg,.aac" style={{ display: "none" }}
+        onChange={(e) => e.target.files?.[0] && onFileSelect(e.target.files[0])} />
 
-      {/* 解析中 */}
       {track.isAnalyzing && (
-        <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center",
-          paddingLeft: 16, gap: 8,
-          color: track.color, fontSize: 12,
-        }}>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", paddingLeft: 16, gap: 8, color: track.color, fontSize: 12 }}>
           <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
           解析中…
         </div>
