@@ -27,22 +27,21 @@ export default function GROOVAApp() {
   const [syncFlash, setSyncFlash] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
 
-  const addLog = (msg: string) => {
-    const time = new Date().toISOString().slice(11, 23);
-    setDebugLog(prev => [`[${time}] ${msg}`, ...prev].slice(0, 8));
-  };
+  // audioEngineのログをUI上に表示
+  useEffect(() => {
+    audioEngine.onDebugLog = (msg: string) => {
+      const time = new Date().toISOString().slice(11, 23);
+      setDebugLog(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10));
+    };
+    return () => { audioEngine.onDebugLog = null; };
+  }, []);
 
   const handlePlay = () => {
     if (isPlaying) {
       audioEngine.stop();
       setIsPlaying(false);
-      addLog("STOP");
     } else {
-      const tracksWithAudio = tracks.filter(t => t.audioBuffer);
-      addLog(`PLAY tap | tracks=${tracks.length} withAudio=${tracksWithAudio.length}`);
       audioEngine.unlockContext();
-      const ctxState = audioEngine.getContextState();
-      addLog(`ctx.state=${ctxState}`);
       audioEngine.play(playheadTime);
       setIsPlaying(true);
     }

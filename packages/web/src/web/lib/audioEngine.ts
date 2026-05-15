@@ -18,6 +18,12 @@ class AudioEngine {
   private startedAt = 0;
   private offsetAt = 0;
   private animFrame: number | null = null;
+  public onDebugLog: ((msg: string) => void) | null = null;
+
+  private log(msg: string) {
+    console.log("[GROOVA]", msg);
+    this.onDebugLog?.(msg);
+  }
 
   getContext(): AudioContext {
     if (!this.ctx) {
@@ -87,9 +93,7 @@ class AudioEngine {
     const ctx = this.getContext();
     const store = useGROOVA.getState();
 
-    // デバッグ: Context状態とトラック数を確認
-    console.log("[GROOVA] play() ctx.state=", ctx.state, "tracks=", store.tracks.length,
-      "withAudio=", store.tracks.filter(t => t.audioBuffer).length);
+    this.log(`play() state=${ctx.state} tracks=${store.tracks.length} audio=${store.tracks.filter(t => t.audioBuffer).length} offset=${offsetSeconds.toFixed(2)}`);
 
     this.stop();
 
@@ -98,7 +102,6 @@ class AudioEngine {
       this.offsetAt = offsetSeconds;
 
       store.tracks.forEach((track) => {
-        console.log("[GROOVA] track", track.id, "audioBuffer=", !!track.audioBuffer, "muted=", track.muted);
         if (!track.audioBuffer || track.muted) return;
         if (store.soloedTrack && store.soloedTrack !== track.id) return;
 
@@ -123,7 +126,12 @@ class AudioEngine {
           const remaining = clipDuration - playFrom;
           if (remaining > 0.01) {
             source.start(ctx.currentTime, trimStart + playFrom, remaining);
+            this.log(`started: dur=${bufDuration.toFixed(1)}s rem=${remaining.toFixed(2)}s vol=${gainNode.gain.value}`);
+          } else {
+            this.log(`SKIP: remaining=${remaining.toFixed(3)} too small`);
           }
+        } else {
+          this.log(`SKIP: offset=${offsetSeconds.toFixed(2)} > trimEnd=${trimEnd.toFixed(2)}`);
         }
 
         this.activeNodes.set(track.id, { source, gainNode });
