@@ -359,17 +359,24 @@ export default function Timeline() {
     }
   }, [tracks.length, canvasWidth, zoomLevel]);
 
-  // Animation loop + autoscroll
+  // ref で最新値を保持（useEffect の deps から外すため）
+  const playheadTimeRef = useRef(playheadTime);
+  const isPlayingRef = useRef(isPlaying);
+  const pxPerSecRef = useRef(pxPerSec);
+  useEffect(() => { playheadTimeRef.current = playheadTime; }, [playheadTime]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => { pxPerSecRef.current = pxPerSec; }, [pxPerSec]);
+
+  // Animation loop + autoscroll — deps を最小化してrAF再起動を防ぐ
   useEffect(() => {
     const loop = () => {
       const rulerCanvas = document.getElementById("groova-ruler") as HTMLCanvasElement;
       tracks.forEach((t) => drawTrack(t));
       if (rulerCanvas) drawRuler(rulerCanvas);
 
-      if (isPlaying && scrollRef.current && !isDraggingPlayhead.current) {
+      if (isPlayingRef.current && scrollRef.current && !isDraggingPlayhead.current) {
         const container = scrollRef.current;
-        // phX はスクロールコンテンツ内座標（ラベル幅なし）
-        const phX = playheadTime * pxPerSec;
+        const phX = playheadTimeRef.current * pxPerSecRef.current;
         const viewLeft = container.scrollLeft;
         const viewW = container.clientWidth;
         const threshold = viewLeft + viewW * 0.75;
@@ -385,7 +392,7 @@ export default function Timeline() {
     };
     animRef.current = requestAnimationFrame(loop);
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
-  }, [tracks, drawTrack, drawRuler, isPlaying, playheadTime, pxPerSec]);
+  }, [tracks, drawTrack, drawRuler]); // playheadTime/isPlaying/pxPerSec を deps から外す
 
   // Playhead DOM position（スクロールコンテンツ内、ラベルなし）
   const playheadX = playheadTime * pxPerSec;
@@ -778,9 +785,13 @@ function TrackCanvas({
       <canvas
         ref={(el) => {
           if (el) {
+            const isNew = !canvasRefs.current.get(track.id);
             canvasRefs.current.set(track.id, el);
-            if (el.width !== canvasWidth) el.width = canvasWidth;
-            if (el.height !== TRACK_HEIGHT) el.height = TRACK_HEIGHT;
+            // 初回マウント時のみサイズ設定（再レンダリングで上書きしない）
+            if (isNew) {
+              el.width = canvasWidth;
+              el.height = TRACK_HEIGHT;
+            }
           }
         }}
         style={{
