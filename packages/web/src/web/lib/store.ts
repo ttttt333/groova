@@ -37,6 +37,8 @@ export type Marker = {
   color: string;
 };
 
+export type EditTool = "move" | "split" | "trim" | "fade";
+
 export type GROOVAState = {
   masterBpm: number;
   isPlaying: boolean;
@@ -53,6 +55,7 @@ export type GROOVAState = {
   audioContext: AudioContext | null;
   scrollResetCounter: number;
   trackOffsets: Record<string, number>;
+  editTool: EditTool;
 
   // Actions
   setMasterBpm: (bpm: number) => void;
@@ -76,6 +79,8 @@ export type GROOVAState = {
   removeSFX: (id: string) => void;
   getOrCreateAudioContext: () => AudioContext;
   syncAllToBpm: () => void;
+  setEditTool: (t: EditTool) => void;
+  splitTrackAtPlayhead: (trackId: string, playheadSec?: number) => void;
 };
 
 const TRACK_COLORS = [
@@ -128,6 +133,7 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
   audioContext: null,
   scrollResetCounter: 0,
   trackOffsets: {},
+  editTool: "move",
 
   setTrackOffset: (id, offsetSec) =>
     set((s) => ({ trackOffsets: { ...s.trackOffsets, [id]: offsetSec } })),
@@ -197,5 +203,55 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
         return { ...t, speed: masterBpm / t.bpm };
       }),
     });
+  },
+
+  setEditTool: (t) => set({ editTool: t }),
+
+  splitTrackAtPlayhead: (trackId, playheadSec) => {
+    const state = get();
+    const track = state.tracks.find((t) => t.id === trackId);
+    if (!track?.audioBuffer) return;
+
+    // プレイヘッド位置（引数 > store の順で優先）
+    const phSec = playheadSec ?? state.playheadTime;
+    const origOffset = state.trackOffsets[trackId] ?? 0;
+    const trimStart = track.trimStart ?? 0;
+    const duration = track.audioBuffer.duration;
+    const trimEnd = track.trimEnd ?? duration;
+
+    // クリップ内の位置に変換
+    const clipEnd = origOffset + (trimEnd - trimStart);
+    if (phSec <= origOffset + 0.1 || phSec >= clipEnd - 0.1) return;
+
+    const elapsed = phSec - origOffset; // クリップ先頭からの経過時間
+    const splitAt = trimStart + elapsed;       // バッファ内の分割位置
+
+    // 前半: 既存トラックを trimEnd を splitAt に
+    state.updateTrack(trackId, { trimEnd: splitAt, fadeOut: 0 });
+
+    // 後半: 新規トラック追加
+    state.addTrack();
+    const newTracks = get().tracks;
+    const newTrack = newTracks[newTracks.length - 1];
+    if (newTrack) {
+      state.updateTrack(newTrack.id, {
+        name: track.name + " [2]",
+        file: track.file,
+        audioBuffer: track.audioBuffer,
+        bpm: track.bpm,
+        bpmConfidence: track.bpmConfidence,
+        waveformData: track.waveformData,
+        beatPositions: track.beatPositions,
+        color: track.color,
+        trimStart: splitAt,
+        trimEnd: track.trimEnd ?? duration,
+        fadeIn: 0,
+        fadeOut: track.fadeOut ?? 0,
+        speed: track.speed,
+        volume: track.volume,
+      });
+      const newOffset = origOffset + elapsed;
+      set((s) => ({ trackOffsets: { ...s.trackOffsets, [newTrack.id]: newOffset } }));
+    }
   },
 }));

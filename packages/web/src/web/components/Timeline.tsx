@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from "react";
-import { useGROOVA, TrackState } from "../lib/store";
+import { useGROOVA, TrackState, EditTool } from "../lib/store";
 import { analyzeBPM, decodeAudioFile, extractWaveform } from "../lib/bpmAnalyzer";
 import { audioEngine } from "../lib/audioEngine";
 
@@ -7,9 +7,6 @@ const TRACK_HEIGHT = 76;
 const RULER_HEIGHT = 32;
 const LABEL_WIDTH = 52;
 const PIXELS_PER_SEC_BASE = 80;
-
-// ── ツールタイプ ──
-type EditTool = "move" | "split" | "trim" | "fade";
 
 /**
  * GridOverlay — CSS background-image でグリッドを描画。
@@ -73,6 +70,7 @@ export default function Timeline() {
     setPlayheadTime, isPlaying, zoomLevel, addTrack, setMasterBpm,
     scrollResetCounter, removeTrack,
     trackOffsets: storeTrackOffsets, setTrackOffset,
+    editTool, setEditTool,
   } = useGROOVA();
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -87,9 +85,8 @@ export default function Timeline() {
   const needsWaveRedraw = useRef(true);
   const needsRulerRedraw = useRef(true);
 
-  // ── 編集ツール状態 ──
-  const [editTool, setEditTool] = useState<EditTool>("move");
-  const editToolRef = useRef<EditTool>("move");
+  // ── 編集ツール状態 (store経由) ──
+  const editToolRef = useRef<EditTool>(editTool);
   useEffect(() => { editToolRef.current = editTool; }, [editTool]);
 
   // trim ドラッグ状態

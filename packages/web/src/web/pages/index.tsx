@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Square, Pause, Zap, Grid3x3, ZoomIn, ZoomOut,
-  Download, Sparkles, Music2, SkipBack, Volume2, Gauge
+  Download, Sparkles, Music2, SkipBack, Volume2, Gauge, Scissors, ChevronRight
 } from "lucide-react";
 import { useGROOVA } from "../lib/store";
 import { audioEngine } from "../lib/audioEngine";
@@ -13,7 +13,7 @@ import SFXPanel from "../components/SFXPanel";
 import ExportPanel from "../components/ExportPanel";
 import TrackSettingsSheet from "../components/TrackSettingsSheet";
 
-type BottomSheet = "fx" | "sfx" | "export" | "settings" | "bpm" | null;
+type BottomSheet = "fx" | "sfx" | "export" | "settings" | "bpm" | "split" | null;
 
 /** 画面の向きを監視 */
 function useIsLandscape() {
@@ -36,7 +36,7 @@ export default function GROOVAApp() {
   const {
     isPlaying, setIsPlaying, masterBpm, zoomLevel, setZoom,
     setPlayheadTime, tracks, showGrid, setShowGrid,
-    syncAllToBpm, resetScroll,
+    syncAllToBpm, resetScroll, editTool, setEditTool, splitTrackAtPlayhead,
   } = useGROOVA();
 
   // playheadTime は store から subscribe しない — DOM直接更新で60fps再レンダリングを回避
@@ -225,6 +225,21 @@ export default function GROOVAApp() {
             }}
           >
             <SkipBack size={14} />
+          </button>
+
+          {/* ✂ 分割 */}
+          <button
+            onClick={() => toggleSheet("split")}
+            style={{
+              width: btnH, height: btnH, borderRadius: btnR,
+              background: sheet === "split" ? "#ff6b2b22" : "#1a1a24",
+              border: `1px solid ${sheet === "split" ? "#ff6b2b88" : "#2a2a3a"}`,
+              color: sheet === "split" ? "#ff6b2b" : "#9999aa",
+              display: "flex", alignItems: "center",
+              justifyContent: "center", cursor: "pointer", flexShrink: 0,
+            }}
+          >
+            <Scissors size={14} />
           </button>
 
           {/* ⏸ 一時停止（再生中のみ表示） */}
@@ -433,6 +448,21 @@ export default function GROOVAApp() {
                 <SkipBack size={16} />
               </button>
 
+              {/* ✂ 分割 */}
+              <button
+                onClick={() => toggleSheet("split")}
+                style={{
+                  width: btnH, height: btnH, borderRadius: btnR,
+                  background: sheet === "split" ? "#ff6b2b22" : "#1a1a24",
+                  border: `1px solid ${sheet === "split" ? "#ff6b2b88" : "#2a2a3a"}`,
+                  color: sheet === "split" ? "#ff6b2b" : "#9999aa",
+                  display: "flex", alignItems: "center",
+                  justifyContent: "center", cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                <Scissors size={16} />
+              </button>
+
               {/* ⏸ 一時停止（再生中のみ） */}
               {isPlaying && (
                 <button
@@ -570,6 +600,15 @@ export default function GROOVAApp() {
                 {sheet === "export" && <ExportPanel />}
                 {sheet === "settings" && <TrackSettingsSheet />}
                 {sheet === "bpm" && <BpmInfoSheet tracks={tracks} masterBpm={masterBpm} />}
+                {sheet === "split" && (
+                  <SplitSheet
+                    tracks={tracks}
+                    onSplit={(id) => {
+                      splitTrackAtPlayhead(id, playheadTimeRef.current);
+                      setSheet(null);
+                    }}
+                  />
+                )}
               </div>
             </motion.div>
           </>
@@ -1001,4 +1040,85 @@ function formatTime(sec: number) {
   const s = Math.floor(sec % 60);
   const ms = Math.floor((sec % 1) * 100);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(ms).padStart(2, "0")}`;
+}
+
+// ── 分割シート ──
+function SplitSheet({
+  tracks,
+  onSplit,
+}: {
+  tracks: import("../lib/store").TrackState[];
+  onSplit: (trackId: string) => void;
+}) {
+  const audioTracks = tracks.filter((t) => t.audioBuffer);
+  return (
+    <div style={{ paddingBottom: 8 }}>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8, marginBottom: 16,
+      }}>
+        <Scissors size={16} color="#ff6b2b" />
+        <span style={{
+          fontFamily: "Space Grotesk, sans-serif",
+          fontWeight: 700, fontSize: 14, color: "#ffffff",
+        }}>
+          プレイヘッド位置で分割
+        </span>
+      </div>
+      <p style={{
+        fontSize: 11, color: "#666677", fontFamily: "Space Grotesk, sans-serif",
+        margin: "0 0 14px",
+      }}>
+        分割するトラックを選択してください
+      </p>
+      {audioTracks.length === 0 ? (
+        <p style={{ fontSize: 12, color: "#444455", textAlign: "center", padding: "24px 0" }}>
+          音声トラックがありません
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {audioTracks.map((track) => (
+            <button
+              key={track.id}
+              onClick={() => onSplit(track.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                background: "#1a1a24", border: "1px solid #2a2a3a",
+                borderRadius: 10, padding: "10px 14px",
+                cursor: "pointer", textAlign: "left",
+                transition: "border-color 0.15s, background 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "#ff6b2b88";
+                (e.currentTarget as HTMLButtonElement).style.background = "#ff6b2b11";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "#2a2a3a";
+                (e.currentTarget as HTMLButtonElement).style.background = "#1a1a24";
+              }}
+            >
+              <div style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: track.color ?? "#a8ff3e", flexShrink: 0,
+              }} />
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                <div style={{
+                  fontFamily: "Space Grotesk, sans-serif",
+                  fontWeight: 600, fontSize: 13, color: "#ccccdd",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {track.name || "無題トラック"}
+                </div>
+                {track.audioBuffer && (
+                  <div style={{ fontSize: 10, color: "#555566", fontFamily: "JetBrains Mono" }}>
+                    {track.audioBuffer.duration.toFixed(1)}s
+                  </div>
+                )}
+              </div>
+              <Scissors size={14} color="#ff6b2b" style={{ flexShrink: 0 }} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
