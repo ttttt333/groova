@@ -23,6 +23,8 @@ export default function MasterPanel() {
   const [tapTimes, setTapTimes] = useState<number[]>([]);
   const pulseRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<number>();
+  const bpmRafRef = useRef<number | null>(null);
+  const pendingBpmRef = useRef<number | null>(null);
 
   // BPM pulse animation
   useEffect(() => {
@@ -42,10 +44,23 @@ export default function MasterPanel() {
     return () => clearInterval(id);
   }, [masterBpm]);
 
+  // BPM変更を rAF で throttle — スライダー操作中の過剰な store 更新を防ぐ
+  const flushBpm = (val: number) => {
+    bpmRafRef.current = null;
+    pendingBpmRef.current = null;
+    setMasterBpm(val);
+  };
+
   const handleBpmChange = (val: string) => {
     setBpmInput(val);
     const n = parseFloat(val);
-    if (!isNaN(n) && n >= 40 && n <= 240) setMasterBpm(n);
+    if (isNaN(n) || n < 40 || n > 240) return;
+    pendingBpmRef.current = n;
+    if (!bpmRafRef.current) {
+      bpmRafRef.current = requestAnimationFrame(() => {
+        if (pendingBpmRef.current !== null) flushBpm(pendingBpmRef.current);
+      });
+    }
   };
 
   const handlePlay = async () => {
@@ -139,10 +154,7 @@ export default function MasterPanel() {
               step={1}
               value={masterBpm}
               style={{ "--val": `${((masterBpm - 60) / 140) * 100}%`, flex: 1 } as any}
-              onChange={(e) => {
-                const v = parseFloat(e.target.value);
-                setMasterBpm(v);
-              }}
+              onChange={(e) => handleBpmChange(e.target.value)}
             />
           </div>
 

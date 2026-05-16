@@ -632,13 +632,14 @@ export default function Timeline() {
       const splitAt = trimStart + timeInClip; // seconds in audio file
       if (splitAt <= trimStart + 0.1 || splitAt >= trimEnd - 0.1) return;
 
+      const origOffset = trackOffsetsRef.current[trackId] || 0;
+      const origTrimEnd = track.trimEnd ?? duration;
+
       // 既存クリップを前半に
       useGROOVA.getState().updateTrack(trackId, { trimEnd: splitAt, fadeOut: 0 });
 
-      // 後半クリップを新規トラックとして追加（同音源を別トラックで表現）
-      // ※ 本格的には同トラック内に複数クリップを持つ必要があるが、
-      //   現アーキテクチャではトラック追加で代用
-      const { addTrack, updateTrack, tracks: currentTracks } = useGROOVA.getState();
+      // 後半クリップを新規トラックとして追加
+      const { addTrack, updateTrack } = useGROOVA.getState();
       addTrack();
       const newTracks = useGROOVA.getState().tracks;
       const newTrack = newTracks[newTracks.length - 1];
@@ -653,15 +654,16 @@ export default function Timeline() {
           beatPositions: track.beatPositions,
           color: track.color,
           trimStart: splitAt,
-          trimEnd: track.trimEnd ?? duration,
+          trimEnd: origTrimEnd,
           fadeIn: 0,
           fadeOut: track.fadeOut ?? 0,
           speed: track.speed,
           volume: track.volume,
         });
-        // オフセット: 新クリップは元クリップと同じオフセット位置から
-        const origOffset = trackOffsetsRef.current[trackId] || 0;
-        setTrackOffsets((prev) => ({ ...prev, [newTrack.id]: origOffset }));
+        // 後半クリップのタイムライン位置 = 元offset + (splitAt - trimStart)
+        // これで前半の終端と後半の先端がぴったり連続する
+        const newOffset = origOffset + (splitAt - trimStart);
+        setTrackOffsets((prev) => ({ ...prev, [newTrack.id]: newOffset }));
       }
       needsWaveRedraw.current = true;
       return;

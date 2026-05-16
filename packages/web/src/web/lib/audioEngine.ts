@@ -100,7 +100,11 @@ class AudioEngine {
 
         const source = ctx.createBufferSource();
         source.buffer = track.audioBuffer;
-        source.playbackRate.value = track.speed ?? 1;
+        // speed: masterBpm / track.bpm でリアルタイム計算（store.speed は参照しない）
+        const computedSpeed = (track.bpm && track.bpm > 0 && store.masterBpm > 0)
+          ? store.masterBpm / track.bpm
+          : (track.speed ?? 1);
+        source.playbackRate.value = computedSpeed;
         source.loop = false;
 
         const gainNode = ctx.createGain();

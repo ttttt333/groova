@@ -128,13 +128,9 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
 
   setMasterBpm: (bpm) => {
     const clamped = Math.min(240, Math.max(40, bpm));
-    const { tracks } = get();
-    // 全トラックの speed を新BPMに合わせて更新
-    const updatedTracks = tracks.map((t) => {
-      if (!t.bpm || t.bpm === 0) return t;
-      return { ...t, speed: clamped / t.bpm };
-    });
-    set({ masterBpm: clamped, tracks: updatedTracks });
+    // masterBpm だけ更新 — tracks は触らない（beatPositions の大量コピーを防ぐ）
+    // speed は audioEngine.play() 時に masterBpm / track.bpm でリアルタイム計算する
+    set({ masterBpm: clamped });
   },
   setIsPlaying: (v) => set({ isPlaying: v }),
   setCurrentTime: (t) => set({ currentTime: t }),
