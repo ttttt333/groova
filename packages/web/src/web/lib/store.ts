@@ -52,9 +52,11 @@ export type GROOVAState = {
   soloedTrack: string | null;
   audioContext: AudioContext | null;
   scrollResetCounter: number;
+  trackOffsets: Record<string, number>;
 
   // Actions
   setMasterBpm: (bpm: number) => void;
+  setTrackOffset: (id: string, offsetSec: number) => void;
   setIsPlaying: (v: boolean) => void;
   setCurrentTime: (t: number) => void;
   setPlayheadTime: (t: number) => void;
@@ -125,6 +127,10 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
   soloedTrack: null,
   audioContext: null,
   scrollResetCounter: 0,
+  trackOffsets: {},
+
+  setTrackOffset: (id, offsetSec) =>
+    set((s) => ({ trackOffsets: { ...s.trackOffsets, [id]: offsetSec } })),
 
   setMasterBpm: (bpm) => {
     const clamped = Math.min(240, Math.max(40, bpm));

@@ -77,7 +77,7 @@ export default function MasterPanel() {
       audioEngine.stop();
       setIsPlaying(false);
     } else {
-      await audioEngine.resumeContext();
+      await audioEngine.ensureRunning();
       audioEngine.play(0);
       setIsPlaying(true);
     }

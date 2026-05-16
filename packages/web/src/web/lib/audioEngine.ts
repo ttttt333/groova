@@ -98,9 +98,23 @@ class AudioEngine {
         if (!track.audioBuffer || track.muted) return;
         if (store.soloedTrack && store.soloedTrack !== track.id) return;
 
+        // タイムライン上のクリップ開始位置（秒）
+        const trackTimelineOffset = store.trackOffsets[track.id] ?? 0;
+
+        const trimStart = track.trimStart ?? 0;
+        const bufDuration = track.audioBuffer.duration;
+        const trimEnd = track.trimEnd ?? bufDuration;
+        const clipDuration = (trimEnd - trimStart) / (track.speed ?? 1);
+
+        // クリップのタイムライン上の終端
+        const clipEnd = trackTimelineOffset + clipDuration;
+
+        // プレイヘッドがクリップ終端を過ぎていたらスキップ
+        if (offsetSeconds >= clipEnd) return;
+
         const source = ctx.createBufferSource();
         source.buffer = track.audioBuffer;
-        // speed: masterBpm / track.bpm でリアルタイム計算（store.speed は参照しない）
+        // speed: masterBpm / track.bpm でリアルタイム計算
         const computedSpeed = (track.bpm && track.bpm > 0 && store.masterBpm > 0)
           ? store.masterBpm / track.bpm
           : (track.speed ?? 1);
@@ -109,42 +123,54 @@ class AudioEngine {
 
         const gainNode = ctx.createGain();
         const vol = track.volume ?? 1;
-
         source.connect(gainNode);
         gainNode.connect(this.masterGain!);
 
-        const trimStart = track.trimStart ?? 0;
-        const bufDuration = track.audioBuffer.duration;
-        const trimEnd = track.trimEnd ?? bufDuration;
-        const clipDuration = trimEnd - trimStart;
         const fadeIn = track.fadeIn ?? 0;
         const fadeOut = track.fadeOut ?? 0;
 
-        if (offsetSeconds <= trimEnd) {
-          const playFrom = Math.max(0, offsetSeconds - trimStart);
-          const remaining = clipDuration - playFrom;
-          if (remaining > 0.01) {
-            const startAt = ctx.currentTime;
-            const endAt = startAt + remaining;
+        if (offsetSeconds < trackTimelineOffset) {
+          // プレイヘッドがクリップ開始前 → 未来にスケジュール
+          const startDelay = trackTimelineOffset - offsetSeconds;
+          const startAt = ctx.currentTime + startDelay;
+          const endAt = startAt + clipDuration;
 
-            // フェードイン
-            if (fadeIn > 0 && playFrom < fadeIn) {
-              gainNode.gain.setValueAtTime(0, startAt);
-              gainNode.gain.linearRampToValueAtTime(vol, startAt + (fadeIn - playFrom));
-              gainNode.gain.setValueAtTime(vol, startAt + (fadeIn - playFrom));
-            } else {
-              gainNode.gain.setValueAtTime(vol, startAt);
-            }
-
-            // フェードアウト
-            if (fadeOut > 0) {
-              const fadeOutStart = Math.max(startAt, endAt - fadeOut);
-              gainNode.gain.setValueAtTime(vol, fadeOutStart);
-              gainNode.gain.linearRampToValueAtTime(0, endAt);
-            }
-
-            source.start(startAt, trimStart + playFrom, remaining);
+          if (fadeIn > 0) {
+            gainNode.gain.setValueAtTime(0, startAt);
+            gainNode.gain.linearRampToValueAtTime(vol, startAt + fadeIn);
+          } else {
+            gainNode.gain.setValueAtTime(vol, startAt);
           }
+          if (fadeOut > 0) {
+            const fadeOutStart = Math.max(startAt, endAt - fadeOut);
+            gainNode.gain.setValueAtTime(vol, fadeOutStart);
+            gainNode.gain.linearRampToValueAtTime(0, endAt);
+          }
+
+          source.start(startAt, trimStart, (trimEnd - trimStart));
+        } else {
+          // プレイヘッドがクリップ内 → 即再生（途中から）
+          const elapsed = offsetSeconds - trackTimelineOffset; // クリップ内の経過時間（等速基準）
+          const playFrom = trimStart + elapsed * computedSpeed; // バッファ内の再生開始位置
+          const remaining = trimEnd - playFrom;
+          if (remaining < 0.01) return;
+
+          const startAt = ctx.currentTime;
+          const endAt = startAt + remaining / computedSpeed;
+
+          if (fadeIn > 0 && elapsed < fadeIn) {
+            gainNode.gain.setValueAtTime(0, startAt);
+            gainNode.gain.linearRampToValueAtTime(vol, startAt + (fadeIn - elapsed));
+          } else {
+            gainNode.gain.setValueAtTime(vol, startAt);
+          }
+          if (fadeOut > 0) {
+            const fadeOutStart = Math.max(startAt, endAt - fadeOut);
+            gainNode.gain.setValueAtTime(vol, fadeOutStart);
+            gainNode.gain.linearRampToValueAtTime(0, endAt);
+          }
+
+          source.start(startAt, playFrom, remaining);
         }
 
         this.activeNodes.set(track.id, { source, gainNode });

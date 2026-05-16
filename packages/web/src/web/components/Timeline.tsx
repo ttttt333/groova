@@ -55,6 +55,7 @@ export default function Timeline() {
     tracks, updateTrack, masterBpm, showGrid,
     setPlayheadTime, isPlaying, zoomLevel, addTrack, setMasterBpm,
     scrollResetCounter, removeTrack,
+    trackOffsets: storeTrackOffsets, setTrackOffset,
   } = useGROOVA();
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -94,7 +95,13 @@ export default function Timeline() {
     duration: number;
   } | null>(null);
 
-  const [trackOffsets, setTrackOffsets] = useState<Record<string, number>>({});
+  const trackOffsets = storeTrackOffsets;
+  const setTrackOffsets = (updater: ((prev: Record<string, number>) => Record<string, number>) | Record<string, number>) => {
+    const next = typeof updater === "function" ? updater(useGROOVA.getState().trackOffsets) : updater;
+    Object.entries(next).forEach(([id, val]) => {
+      if (useGROOVA.getState().trackOffsets[id] !== val) setTrackOffset(id, val);
+    });
+  };
   const [bpmToast, setBpmToast] = useState<{ bpm: number; trackName: string; color: string } | null>(null);
   const prevBpmRef = useRef<Record<string, number | null>>({});
   const pxPerSec = PIXELS_PER_SEC_BASE * zoomLevel;
@@ -726,7 +733,8 @@ export default function Timeline() {
         const newStart = Math.max(0, Math.min(origTrimEnd - 0.1, origTrimStart + dx));
         const newOffset = Math.max(0, origOffset + dx);
         store.updateTrack(id, { trimStart: newStart });
-        setTrackOffsets((prev) => ({ ...prev, [id]: newOffset }));
+        // trim ドラッグ中も ref のみ更新 → pointerUp で store へ
+        trackOffsetsRef.current = { ...trackOffsetsRef.current, [id]: newOffset };
       }
       needsWaveRedraw.current = true;
       return;
@@ -751,16 +759,31 @@ export default function Timeline() {
     if (isDraggingTrack.current) {
       const { id, startX, origOffset } = isDraggingTrack.current;
       const dx = e.clientX - startX;
-      setTrackOffsets((prev) => ({ ...prev, [id]: Math.max(0, origOffset + dx / pxPerSecRef.current) }));
+      const newOffset = Math.max(0, origOffset + dx / pxPerSecRef.current);
+      // ドラッグ中は ref のみ更新（store への書き込みは pointerUp で行う）
+      trackOffsetsRef.current = { ...trackOffsetsRef.current, [id]: newOffset };
+      needsWaveRedraw.current = true;
     }
   }, []);
 
   // ── Track PointerUp ──
   const handleTrackPointerUp = useCallback(() => {
+    // trim-left 確定 → store に offset 反映
+    if (isTrimming.current && isTrimming.current.side === "left") {
+      const { id } = isTrimming.current;
+      const finalOffset = trackOffsetsRef.current[id] ?? 0;
+      setTrackOffset(id, finalOffset);
+    }
     isTrimming.current = null;
     isFading.current = null;
+    // move ドラッグ確定 → store に反映
+    if (isDraggingTrack.current) {
+      const { id } = isDraggingTrack.current;
+      const finalOffset = trackOffsetsRef.current[id] ?? 0;
+      setTrackOffset(id, finalOffset);
+    }
     isDraggingTrack.current = null;
-  }, []);
+  }, [setTrackOffset]);
 
   // ── カーソル更新（hover） ──
   const handleTrackPointerHover = useCallback((e: React.PointerEvent, trackId: string) => {
@@ -818,7 +841,13 @@ export default function Timeline() {
 
   const handleDeleteTrack = (trackId: string) => {
     canvasRefs.current.delete(trackId);
-    setTrackOffsets((prev) => { const n = { ...prev }; delete n[trackId]; return n; });
+    // store の trackOffsets から削除（-1 で無効化 → storeTrackOffsets を読む側でフィルタ）
+    // setTrackOffset はないので store を直接更新
+    useGROOVA.setState((s) => {
+      const n = { ...s.trackOffsets };
+      delete n[trackId];
+      return { trackOffsets: n };
+    });
     removeTrack(trackId);
   };
 
