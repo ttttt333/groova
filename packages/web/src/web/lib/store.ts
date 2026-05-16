@@ -11,6 +11,8 @@ export type TrackState = {
   speed: number; // multiplier
   trimStart: number; // seconds
   trimEnd: number | null; // null = end of file
+  fadeIn: number;  // seconds
+  fadeOut: number; // seconds
   waveformData: Float32Array | null;
   beatPositions: number[]; // seconds
   color: string;
@@ -97,6 +99,8 @@ function makeTrack(idx: number): TrackState {
     speed: 1.0,
     trimStart: 0,
     trimEnd: null,
+    fadeIn: 0,
+    fadeOut: 0,
     waveformData: null,
     beatPositions: [],
     color: TRACK_COLORS[(idx - 1) % TRACK_COLORS.length],

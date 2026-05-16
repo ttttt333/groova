@@ -9,6 +9,9 @@ const RULER_HEIGHT = 32;
 const LABEL_WIDTH = 52;
 const PIXELS_PER_SEC_BASE = 80;
 
+// ── ツールタイプ ──
+type EditTool = "move" | "split" | "trim" | "fade";
+
 function BpmToast({ bpm, trackName, color, onDone }: {
   bpm: number; trackName: string; color: string; onDone: () => void;
 }) {
@@ -57,16 +60,39 @@ export default function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerDragRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
-  // プレイヘッドDOMを直接操作するためのref（Reactレンダリング外）
   const playheadLineRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<number>();
   const isDraggingPlayhead = useRef(false);
   const scrollTargetRef = useRef<number | null>(null);
   const isDraggingTrack = useRef<{ id: string; startX: number; origOffset: number } | null>(null);
   const pinchRef = useRef<{ dist: number; zoom: number } | null>(null);
-  // 波形再描画フラグ
   const needsWaveRedraw = useRef(true);
   const needsRulerRedraw = useRef(true);
+
+  // ── 編集ツール状態 ──
+  const [editTool, setEditTool] = useState<EditTool>("move");
+  const editToolRef = useRef<EditTool>("move");
+  useEffect(() => { editToolRef.current = editTool; }, [editTool]);
+
+  // trim ドラッグ状態
+  const isTrimming = useRef<{
+    id: string;
+    side: "left" | "right";
+    startX: number;
+    origTrimStart: number;
+    origTrimEnd: number;
+    origOffset: number;
+    duration: number;
+  } | null>(null);
+
+  // fade ドラッグ状態
+  const isFading = useRef<{
+    id: string;
+    side: "in" | "out";
+    startX: number;
+    origFade: number;
+    duration: number;
+  } | null>(null);
 
   const [trackOffsets, setTrackOffsets] = useState<Record<string, number>>({});
   const [bpmToast, setBpmToast] = useState<{ bpm: number; trackName: string; color: string } | null>(null);
@@ -85,7 +111,6 @@ export default function Timeline() {
   );
   const canvasWidth = Math.max(maxDuration * pxPerSec + 200, 600);
 
-  // スクロールリセット
   useEffect(() => {
     if (scrollResetCounter > 0 && scrollRef.current) {
       scrollTargetRef.current = null;
@@ -93,7 +118,6 @@ export default function Timeline() {
     }
   }, [scrollResetCounter]);
 
-  // BPMトースト
   useEffect(() => {
     tracks.forEach((t) => {
       const prev = prevBpmRef.current[t.id];
@@ -104,13 +128,11 @@ export default function Timeline() {
     });
   }, [tracks]);
 
-  // tracksやzoom等が変わったら波形再描画フラグを立てる
   useEffect(() => {
     needsWaveRedraw.current = true;
     needsRulerRedraw.current = true;
   }, [tracks, pxPerSec, trackOffsets, showGrid, masterBpm]);
 
-  // refs for rAF（stateをrefで参照して再レンダリングを起こさない）
   const playheadTimeRef = useRef(0);
   const isPlayingRef = useRef(isPlaying);
   const pxPerSecRef = useRef(pxPerSec);
@@ -132,7 +154,7 @@ export default function Timeline() {
   useEffect(() => { maxDurationRef.current = maxDuration; }, [maxDuration]);
   useEffect(() => { canvasWidthRef.current = canvasWidth; }, [canvasWidth]);
 
-  // ── drawTrack（波形のみ・プレイヘッドなし） ──
+  // ── drawTrack（フェードオーバーレイ付き） ──
   const drawTrack = useCallback((track: TrackState) => {
     const canvas = canvasRefs.current.get(track.id);
     if (!canvas) return;
@@ -154,38 +176,52 @@ export default function Timeline() {
 
     if (waveform && duration > 0) {
       const clipX = offset * pxPerSec;
-      const clipW = duration * pxPerSec;
+      const trimStart = track.trimStart ?? 0;
+      const trimEnd = track.trimEnd ?? duration;
+      const clipW = (trimEnd - trimStart) * pxPerSec;
+      const trimStartX = clipX;
+      const trimEndX = clipX + clipW;
 
+      // クリップ背景
       ctx.fillStyle = track.color + "18";
       ctx.beginPath();
-      ctx.roundRect(clipX, 2, clipW, H - 4, 4);
+      ctx.roundRect(trimStartX, 2, clipW, H - 4, 4);
       ctx.fill();
       ctx.strokeStyle = track.color + "66";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(clipX, 2, clipW, H - 4, 4);
+      ctx.roundRect(trimStartX, 2, clipW, H - 4, 4);
       ctx.stroke();
 
-      const samplesPerPx = waveform.length / clipW;
+      // 波形描画（trimStart〜trimEnd の範囲のみ）
+      const fullClipW = duration * pxPerSec;
+      const samplesPerPx = waveform.length / fullClipW;
+      const trimStartPx = trimStart * pxPerSec;
 
       if (samplesPerPx > 1) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(trimStartX, 0, clipW, H);
+        ctx.clip();
         ctx.beginPath();
         const midY = H / 2;
         const ampScale = (H - 8) * 0.42;
         for (let px = 0; px < clipW; px++) {
-          const sStart = Math.floor(px * samplesPerPx);
-          const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
+          const srcPx = trimStartPx + px;
+          const sStart = Math.floor(srcPx * samplesPerPx);
+          const sEnd = Math.min(Math.ceil((srcPx + 1) * samplesPerPx), waveform.length);
           let max = 0;
           for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
           const y = midY - max * ampScale;
-          if (px === 0) ctx.moveTo(clipX + px, y); else ctx.lineTo(clipX + px, y);
+          if (px === 0) ctx.moveTo(trimStartX + px, y); else ctx.lineTo(trimStartX + px, y);
         }
         for (let px = Math.floor(clipW) - 1; px >= 0; px--) {
-          const sStart = Math.floor(px * samplesPerPx);
-          const sEnd = Math.min(Math.ceil((px + 1) * samplesPerPx), waveform.length);
+          const srcPx = trimStartPx + px;
+          const sStart = Math.floor(srcPx * samplesPerPx);
+          const sEnd = Math.min(Math.ceil((srcPx + 1) * samplesPerPx), waveform.length);
           let max = 0;
           for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
-          ctx.lineTo(clipX + px, midY + max * ampScale);
+          ctx.lineTo(trimStartX + px, midY + max * ampScale);
         }
         ctx.closePath();
         ctx.fillStyle = track.color + "bb";
@@ -193,48 +229,129 @@ export default function Timeline() {
         ctx.strokeStyle = track.color;
         ctx.lineWidth = 0.5;
         ctx.stroke();
+        ctx.restore();
       } else {
-        const pxPerSample = clipW / waveform.length;
+        const pxPerSample = fullClipW / waveform.length;
         const barW = Math.max(1, pxPerSample - (pxPerSample > 3 ? 1 : 0));
-        const scrollLeft = scrollRef.current?.scrollLeft || 0;
-        const viewWidth = scrollRef.current?.clientWidth || clipW;
-        const visStart = Math.max(0, Math.floor(((scrollLeft - clipX) / clipW) * waveform.length) - 2);
-        const visEnd = Math.min(waveform.length, Math.ceil(((scrollLeft + viewWidth - clipX) / clipW) * waveform.length) + 2);
-        ctx.fillStyle = track.color + "dd";
         const midY = H / 2;
         const ampScale = (H - 8) * 0.42;
-        for (let i = visStart; i < visEnd; i++) {
+        const visStartSample = Math.max(0, Math.floor(trimStart * (waveform.length / duration)) - 2);
+        const visEndSample = Math.min(waveform.length, Math.ceil(trimEnd * (waveform.length / duration)) + 2);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(trimStartX, 0, clipW, H);
+        ctx.clip();
+        ctx.fillStyle = track.color + "dd";
+        for (let i = visStartSample; i < visEndSample; i++) {
           const amp = waveform[i];
           const barH = amp * ampScale * 2;
-          ctx.fillRect(clipX + i * pxPerSample, midY - barH / 2, barW, barH);
+          const x = clipX + i * pxPerSample;
+          ctx.fillRect(x, midY - barH / 2, barW, barH);
         }
-        ctx.strokeStyle = track.color + "44";
-        ctx.lineWidth = 0.5;
-        ctx.beginPath();
-        ctx.moveTo(clipX, H / 2);
-        ctx.lineTo(clipX + clipW, H / 2);
-        ctx.stroke();
+        ctx.restore();
       }
 
+      // トラック名・BPM
       ctx.fillStyle = track.color + "99";
       ctx.font = "bold 9px Space Grotesk, sans-serif";
-      ctx.fillText(track.name, clipX + 6, H - 6);
-
+      ctx.fillText(track.name, trimStartX + 6, H - 6);
       if (track.bpm) {
         ctx.fillStyle = track.color;
         ctx.font = "bold 9px JetBrains Mono, monospace";
-        ctx.fillText(`${track.bpm}`, clipX + 6, 14);
+        ctx.fillText(`${track.bpm}`, trimStartX + 6, 14);
       }
 
-      const trimStartX = clipX + (track.trimStart / duration) * clipW;
-      const trimEndX = clipX + ((track.trimEnd || duration) / duration) * clipW;
+      // ── フェードイン オーバーレイ ──
+      const fadeIn = track.fadeIn ?? 0;
+      if (fadeIn > 0) {
+        const fadeInPx = Math.min(fadeIn * pxPerSec, clipW);
+        const grad = ctx.createLinearGradient(trimStartX, 0, trimStartX + fadeInPx, 0);
+        grad.addColorStop(0, "#0d0d14ee");
+        grad.addColorStop(1, "rgba(13,13,20,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.rect(trimStartX, 2, fadeInPx, H - 4);
+        ctx.fill();
+        // フェードイン斜線
+        ctx.strokeStyle = track.color + "88";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(trimStartX, H - 4);
+        ctx.lineTo(trimStartX + fadeInPx, 2);
+        ctx.stroke();
+        // ハンドル (左上三角)
+        ctx.fillStyle = track.color;
+        ctx.beginPath();
+        ctx.moveTo(trimStartX, 2);
+        ctx.lineTo(trimStartX + 14, 2);
+        ctx.lineTo(trimStartX, 16);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        // フェードインなしの時もハンドル表示（小さく）
+        ctx.fillStyle = track.color + "55";
+        ctx.beginPath();
+        ctx.moveTo(trimStartX, 2);
+        ctx.lineTo(trimStartX + 10, 2);
+        ctx.lineTo(trimStartX, 12);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // ── フェードアウト オーバーレイ ──
+      const fadeOut = track.fadeOut ?? 0;
+      if (fadeOut > 0) {
+        const fadeOutPx = Math.min(fadeOut * pxPerSec, clipW);
+        const grad = ctx.createLinearGradient(trimEndX - fadeOutPx, 0, trimEndX, 0);
+        grad.addColorStop(0, "rgba(13,13,20,0)");
+        grad.addColorStop(1, "#0d0d14ee");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.rect(trimEndX - fadeOutPx, 2, fadeOutPx, H - 4);
+        ctx.fill();
+        // フェードアウト斜線
+        ctx.strokeStyle = track.color + "88";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(trimEndX - fadeOutPx, 2);
+        ctx.lineTo(trimEndX, H - 4);
+        ctx.stroke();
+        // ハンドル (右上三角)
+        ctx.fillStyle = track.color;
+        ctx.beginPath();
+        ctx.moveTo(trimEndX, 2);
+        ctx.lineTo(trimEndX - 14, 2);
+        ctx.lineTo(trimEndX, 16);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.fillStyle = track.color + "55";
+        ctx.beginPath();
+        ctx.moveTo(trimEndX, 2);
+        ctx.lineTo(trimEndX - 10, 2);
+        ctx.lineTo(trimEndX, 12);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // ── リサイズハンドル（左端・右端） ──
+      // 左端
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(trimStartX - 1, 0, 2, H);
-      ctx.beginPath(); ctx.moveTo(trimStartX, 2); ctx.lineTo(trimStartX + 10, 2); ctx.lineTo(trimStartX, 14); ctx.fill();
+      // 右端
+      ctx.fillStyle = "#ffffff";
       ctx.fillRect(trimEndX - 1, 0, 2, H);
-      ctx.beginPath(); ctx.moveTo(trimEndX, 2); ctx.lineTo(trimEndX - 10, 2); ctx.lineTo(trimEndX, 14); ctx.fill();
+      // 右端グリップ（縦3本線）
+      ctx.fillStyle = track.color + "cc";
+      for (let i = 0; i < 3; i++) {
+        ctx.fillRect(trimEndX - 8 + i * 3, H / 2 - 8, 1.5, 16);
+      }
+      // 左端グリップ
+      for (let i = 0; i < 3; i++) {
+        ctx.fillRect(trimStartX + 2 + i * 3, H / 2 - 8, 1.5, 16);
+      }
 
-      // 8カウントマーカー
+      // ── 8カウントマーカー ──
       if (showGridRef.current) {
         const top = topAudioTrackRef.current;
         if (top && top.id === track.id && top.beatPositions?.length > 0) {
@@ -278,7 +395,6 @@ export default function Timeline() {
       ctx.textAlign = "left";
     }
 
-    // 解析アニメ（これだけはrAFで毎フレーム更新が必要）
     if (track.isAnalyzing) {
       const scanX = ((Date.now() % 2000) / 2000) * W;
       const grad = ctx.createLinearGradient(scanX - 40, 0, scanX + 40, 0);
@@ -287,12 +403,12 @@ export default function Timeline() {
       grad.addColorStop(1, "rgba(0,245,255,0)");
       ctx.fillStyle = grad;
       ctx.fillRect(scanX - 40, 0, 80, H);
-      return true; // 解析中は毎フレーム再描画が必要
+      return true;
     }
     return false;
-  }, []); // deps なし — すべて ref 経由
+  }, []);
 
-  // ── drawRuler（プレイヘッドなし） ──
+  // ── drawRuler ──
   const drawRuler = useCallback((canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -347,7 +463,7 @@ export default function Timeline() {
       }
       t += stepSec;
     }
-  }, []); // deps なし
+  }, []);
 
   // Canvas resize
   useEffect(() => {
@@ -365,32 +481,27 @@ export default function Timeline() {
     }
   }, [tracks.length, canvasWidth]);
 
-  // ── rAF loop: プレイヘッドDOM更新 + オートスクロール + 必要時のみ波形描画 ──
+  // ── rAF loop ──
   useEffect(() => {
     let lastStoreWrite = 0;
     const loop = () => {
-      // ① プレイヘッド位置を audioEngine から直接取得（storeを経由しない）
       const phTime = audioEngine.getCurrentTime();
       playheadTimeRef.current = phTime;
 
-      // ② プレイヘッドDIVを transform で直接動かす（React再レンダリングなし）
       if (playheadLineRef.current) {
         const x = phTime * pxPerSecRef.current;
         playheadLineRef.current.style.transform = `translateX(${x}px)`;
       }
 
-      // ② store.setPlayheadTime は250ms間隔で間引き（ExportPanelなど向け）
       const now = performance.now();
       if (now - lastStoreWrite > 250) {
         setPlayheadTime(phTime);
         lastStoreWrite = now;
       }
 
-      // ③ 解析中トラックがあれば波形フラグを立てる
       const hasAnalyzing = tracksRef.current.some((t) => t.isAnalyzing);
       if (hasAnalyzing) needsWaveRedraw.current = true;
 
-      // ④ 波形再描画（変化時のみ）
       if (needsWaveRedraw.current) {
         tracksRef.current.forEach((t) => drawTrack(t));
         needsWaveRedraw.current = false;
@@ -401,7 +512,6 @@ export default function Timeline() {
         needsRulerRedraw.current = false;
       }
 
-      // ⑤ オートスクロール（lerp）
       if (scrollRef.current) {
         const container = scrollRef.current;
         if (isPlayingRef.current && !isDraggingPlayhead.current) {
@@ -428,9 +538,9 @@ export default function Timeline() {
     };
     animRef.current = requestAnimationFrame(loop);
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
-  }, [drawTrack, drawRuler]); // tracks等はref経由なので依存不要
+  }, [drawTrack, drawRuler]);
 
-  // ── ルーラーpointer drag ──
+  // ── ルーラー drag ──
   const handleRulerPointerDown = (e: React.PointerEvent) => {
     isDraggingPlayhead.current = true;
     scrollTargetRef.current = null;
@@ -451,27 +561,212 @@ export default function Timeline() {
     setPlayheadTime(t);
     audioEngine.seekTo?.(t);
   };
-  const handleRulerPointerUp = () => {
-    isDraggingPlayhead.current = false;
-  };
+  const handleRulerPointerUp = () => { isDraggingPlayhead.current = false; };
 
-  // Track clip drag
-  const handleTrackPointerDown = (e: React.PointerEvent, trackId: string) => {
+  // ── ヒットテスト: クリック位置からトラック上のどの部分かを判定 ──
+  const hitTest = useCallback((e: React.PointerEvent, trackId: string): {
+    zone: "trim-left" | "trim-right" | "fade-in" | "fade-out" | "body" | "none";
+    timeInClip: number;
+    timeOnTimeline: number;
+  } => {
+    const canvas = canvasRefs.current.get(trackId);
+    if (!canvas) return { zone: "none", timeInClip: 0, timeOnTimeline: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = e.clientX - rect.left + (scrollRef.current?.scrollLeft || 0);
+    const canvasY = e.clientY - rect.top;
+
+    const track = tracksRef.current.find((t) => t.id === trackId);
+    if (!track?.audioBuffer) return { zone: "none", timeInClip: 0, timeOnTimeline: 0 };
+
+    const pxPerSec = pxPerSecRef.current;
+    const offset = trackOffsetsRef.current[trackId] || 0;
+    const duration = track.audioBuffer.duration;
+    const trimStart = track.trimStart ?? 0;
+    const trimEnd = track.trimEnd ?? duration;
+    const clipW = (trimEnd - trimStart) * pxPerSec;
+    const clipX = offset * pxPerSec; // trimStart side in canvas coords
+    const clipEndX = clipX + clipW;
+
+    const timeOnTimeline = canvasX / pxPerSec;
+    const timeInClip = timeOnTimeline - offset;
+
+    const HANDLE_PX = 16; // ハンドル検出幅
+
+    // 右端リサイズゾーン
+    if (Math.abs(canvasX - clipEndX) < HANDLE_PX) return { zone: "trim-right", timeInClip, timeOnTimeline };
+    // 左端リサイズゾーン
+    if (Math.abs(canvasX - clipX) < HANDLE_PX) return { zone: "trim-left", timeInClip, timeOnTimeline };
+    // フェードインハンドル（左上三角）
+    if (canvasY < 20 && canvasX >= clipX && canvasX < clipX + HANDLE_PX * 2) return { zone: "fade-in", timeInClip, timeOnTimeline };
+    // フェードアウトハンドル（右上三角）
+    if (canvasY < 20 && canvasX <= clipEndX && canvasX > clipEndX - HANDLE_PX * 2) return { zone: "fade-out", timeInClip, timeOnTimeline };
+    // クリップ内
+    if (canvasX >= clipX && canvasX <= clipEndX) return { zone: "body", timeInClip, timeOnTimeline };
+    return { zone: "none", timeInClip, timeOnTimeline };
+  }, []);
+
+  // ── カーソルスタイル決定 ──
+  const getCursor = useCallback((zone: string): string => {
+    const tool = editToolRef.current;
+    if (tool === "split") return "crosshair";
+    if (tool === "fade") return "ns-resize";
+    if (zone === "trim-left" || zone === "trim-right") return "col-resize";
+    if (zone === "fade-in" || zone === "fade-out") return "ew-resize";
+    return "grab";
+  }, []);
+
+  // ── Track PointerDown ──
+  const handleTrackPointerDown = useCallback((e: React.PointerEvent, trackId: string) => {
     e.stopPropagation();
-    isDraggingTrack.current = {
-      id: trackId,
-      startX: e.clientX,
-      origOffset: trackOffsets[trackId] || 0,
-    };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  };
-  const handleTrackPointerMove = (e: React.PointerEvent) => {
-    if (!isDraggingTrack.current) return;
-    const { id, startX, origOffset } = isDraggingTrack.current;
-    const dx = e.clientX - startX;
-    setTrackOffsets((prev) => ({ ...prev, [id]: Math.max(0, origOffset + dx / pxPerSecRef.current) }));
-  };
-  const handleTrackPointerUp = () => { isDraggingTrack.current = null; };
+    const track = tracksRef.current.find((t) => t.id === trackId);
+    if (!track?.audioBuffer) return;
+
+    const { zone, timeOnTimeline, timeInClip } = hitTest(e, trackId);
+    const tool = editToolRef.current;
+
+    // ── 分割 ──
+    if (tool === "split" && zone === "body") {
+      const duration = track.audioBuffer.duration;
+      const trimStart = track.trimStart ?? 0;
+      const trimEnd = track.trimEnd ?? duration;
+      const splitAt = trimStart + timeInClip; // seconds in audio file
+      if (splitAt <= trimStart + 0.1 || splitAt >= trimEnd - 0.1) return;
+
+      // 既存クリップを前半に
+      useGROOVA.getState().updateTrack(trackId, { trimEnd: splitAt, fadeOut: 0 });
+
+      // 後半クリップを新規トラックとして追加（同音源を別トラックで表現）
+      // ※ 本格的には同トラック内に複数クリップを持つ必要があるが、
+      //   現アーキテクチャではトラック追加で代用
+      const { addTrack, updateTrack, tracks: currentTracks } = useGROOVA.getState();
+      addTrack();
+      const newTracks = useGROOVA.getState().tracks;
+      const newTrack = newTracks[newTracks.length - 1];
+      if (newTrack) {
+        updateTrack(newTrack.id, {
+          name: track.name + " [2]",
+          file: track.file,
+          audioBuffer: track.audioBuffer,
+          bpm: track.bpm,
+          bpmConfidence: track.bpmConfidence,
+          waveformData: track.waveformData,
+          beatPositions: track.beatPositions,
+          color: track.color,
+          trimStart: splitAt,
+          trimEnd: track.trimEnd ?? duration,
+          fadeIn: 0,
+          fadeOut: track.fadeOut ?? 0,
+          speed: track.speed,
+          volume: track.volume,
+        });
+        // オフセット: 新クリップは元クリップと同じオフセット位置から
+        const origOffset = trackOffsetsRef.current[trackId] || 0;
+        setTrackOffsets((prev) => ({ ...prev, [newTrack.id]: origOffset }));
+      }
+      needsWaveRedraw.current = true;
+      return;
+    }
+
+    // ── リサイズ（trim） ──
+    if (zone === "trim-right" || zone === "trim-left") {
+      const duration = track.audioBuffer.duration;
+      isTrimming.current = {
+        id: trackId,
+        side: zone === "trim-right" ? "right" : "left",
+        startX: e.clientX,
+        origTrimStart: track.trimStart ?? 0,
+        origTrimEnd: track.trimEnd ?? duration,
+        origOffset: trackOffsetsRef.current[trackId] || 0,
+        duration,
+      };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // ── フェード ──
+    if (zone === "fade-in" || zone === "fade-out") {
+      const duration = track.audioBuffer.duration;
+      const trimEnd = track.trimEnd ?? duration;
+      const trimStart = track.trimStart ?? 0;
+      isFading.current = {
+        id: trackId,
+        side: zone === "fade-in" ? "in" : "out",
+        startX: e.clientX,
+        origFade: zone === "fade-in" ? (track.fadeIn ?? 0) : (track.fadeOut ?? 0),
+        duration: trimEnd - trimStart,
+      };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // ── 通常移動 ──
+    if (zone === "body") {
+      isDraggingTrack.current = {
+        id: trackId,
+        startX: e.clientX,
+        origOffset: trackOffsetsRef.current[trackId] || 0,
+      };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    }
+  }, [hitTest]);
+
+  // ── Track PointerMove ──
+  const handleTrackPointerMove = useCallback((e: React.PointerEvent) => {
+    // trimming
+    if (isTrimming.current) {
+      const { id, side, startX, origTrimStart, origTrimEnd, origOffset, duration } = isTrimming.current;
+      const dx = (e.clientX - startX) / pxPerSecRef.current;
+      const store = useGROOVA.getState();
+      if (side === "right") {
+        const newEnd = Math.min(duration, Math.max(origTrimStart + 0.1, origTrimEnd + dx));
+        store.updateTrack(id, { trimEnd: newEnd });
+      } else {
+        const newStart = Math.max(0, Math.min(origTrimEnd - 0.1, origTrimStart + dx));
+        const newOffset = Math.max(0, origOffset + dx);
+        store.updateTrack(id, { trimStart: newStart });
+        setTrackOffsets((prev) => ({ ...prev, [id]: newOffset }));
+      }
+      needsWaveRedraw.current = true;
+      return;
+    }
+
+    // fading
+    if (isFading.current) {
+      const { id, side, startX, origFade, duration } = isFading.current;
+      const dx = (e.clientX - startX) / pxPerSecRef.current;
+      const newFade = Math.max(0, Math.min(duration * 0.9, origFade + (side === "in" ? dx : -dx)));
+      const store = useGROOVA.getState();
+      if (side === "in") {
+        store.updateTrack(id, { fadeIn: newFade });
+      } else {
+        store.updateTrack(id, { fadeOut: newFade });
+      }
+      needsWaveRedraw.current = true;
+      return;
+    }
+
+    // move
+    if (isDraggingTrack.current) {
+      const { id, startX, origOffset } = isDraggingTrack.current;
+      const dx = e.clientX - startX;
+      setTrackOffsets((prev) => ({ ...prev, [id]: Math.max(0, origOffset + dx / pxPerSecRef.current) }));
+    }
+  }, []);
+
+  // ── Track PointerUp ──
+  const handleTrackPointerUp = useCallback(() => {
+    isTrimming.current = null;
+    isFading.current = null;
+    isDraggingTrack.current = null;
+  }, []);
+
+  // ── カーソル更新（hover） ──
+  const handleTrackPointerHover = useCallback((e: React.PointerEvent, trackId: string) => {
+    if (isTrimming.current || isFading.current || isDraggingTrack.current) return;
+    const { zone } = hitTest(e, trackId);
+    const canvas = canvasRefs.current.get(trackId);
+    if (canvas) canvas.style.cursor = getCursor(zone);
+  }, [hitTest, getCursor]);
 
   // Pinch zoom
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -548,13 +843,34 @@ export default function Timeline() {
           display: "flex", flexDirection: "column",
           borderRight: "1px solid #1a1a24", background: "#0c0c14", zIndex: 5,
         }}>
+          {/* ツールバー */}
           <div style={{
             height: RULER_HEIGHT, flexShrink: 0,
             borderBottom: "1px solid #1a1a24",
-            display: "flex", alignItems: "center", paddingLeft: 6,
-            background: "#0a0a0f",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+            background: "#0a0a0f", padding: "0 4px",
           }}>
-            <span style={{ fontSize: 9, color: "#333344" }}>TIME</span>
+            {([
+              { tool: "move" as EditTool, icon: "⇄", title: "移動" },
+              { tool: "split" as EditTool, icon: "✂", title: "分割" },
+              { tool: "trim" as EditTool, icon: "⟷", title: "リサイズ" },
+              { tool: "fade" as EditTool, icon: "∿", title: "フェード" },
+            ]).map(({ tool, icon, title }) => (
+              <button
+                key={tool}
+                title={title}
+                onClick={() => setEditTool(tool)}
+                style={{
+                  width: 22, height: 22, borderRadius: 5,
+                  background: editTool === tool ? "#a8ff3e22" : "transparent",
+                  border: `1px solid ${editTool === tool ? "#a8ff3e66" : "#2a2a3a"}`,
+                  color: editTool === tool ? "#a8ff3e" : "#555566",
+                  fontSize: 11, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  touchAction: "manipulation",
+                }}
+              >{icon}</button>
+            ))}
           </div>
           <div style={{ flex: 1, overflowY: "hidden" }}>
             {tracks.map((track) => (
@@ -584,9 +900,7 @@ export default function Timeline() {
         {/* 右: スクロール領域 */}
         <div
           ref={scrollRef}
-          onScroll={() => {
-            if (!isPlayingRef.current) scrollTargetRef.current = null;
-          }}
+          onScroll={() => { if (!isPlayingRef.current) scrollTargetRef.current = null; }}
           style={{
             flex: 1, overflowX: "auto", overflowY: "hidden",
             scrollbarWidth: "thin", scrollbarColor: "#252535 #0a0a0f",
@@ -617,10 +931,11 @@ export default function Timeline() {
               <TrackCanvas
                 key={track.id}
                 track={track}
+                editTool={editTool}
                 canvasWidth={canvasWidth}
                 canvasRefs={canvasRefs}
                 onPointerDown={(e) => handleTrackPointerDown(e, track.id)}
-                onPointerMove={handleTrackPointerMove}
+                onPointerMove={(e) => { handleTrackPointerMove(e); handleTrackPointerHover(e, track.id); }}
                 onPointerUp={handleTrackPointerUp}
                 onDrop={(e) => handleFileDrop(e, track.id)}
                 onFileSelect={(file) => loadFile(file, track.id)}
@@ -631,7 +946,7 @@ export default function Timeline() {
               <div style={{ height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24", background: "#080810" }} />
             )}
 
-            {/* プレイヘッド — transform で直接移動（Reactレンダリング外） */}
+            {/* プレイヘッド */}
             <div
               ref={playheadLineRef}
               style={{
@@ -717,8 +1032,9 @@ function TrackLabel({ track, onDelete, onFileSelect }: {
 }
 
 // ── Canvas列 ──
-function TrackCanvas({ track, canvasWidth, canvasRefs, onPointerDown, onPointerMove, onPointerUp, onDrop, onFileSelect }: {
+function TrackCanvas({ track, editTool, canvasWidth, canvasRefs, onPointerDown, onPointerMove, onPointerUp, onDrop, onFileSelect }: {
   track: TrackState;
+  editTool: EditTool;
   canvasWidth: number;
   canvasRefs: React.MutableRefObject<Map<string, HTMLCanvasElement>>;
   onPointerDown: (e: React.PointerEvent) => void;
@@ -728,6 +1044,13 @@ function TrackCanvas({ track, canvasWidth, canvasRefs, onPointerDown, onPointerM
   onFileSelect: (file: File) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const cursorMap: Record<EditTool, string> = {
+    move: track.audioBuffer ? "grab" : "default",
+    split: track.audioBuffer ? "crosshair" : "default",
+    trim: track.audioBuffer ? "col-resize" : "default",
+    fade: track.audioBuffer ? "ew-resize" : "default",
+  };
 
   return (
     <div style={{ height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24", position: "relative" }}>
@@ -742,7 +1065,7 @@ function TrackCanvas({ track, canvasWidth, canvasRefs, onPointerDown, onPointerM
         style={{
           width: "100%", height: "100%", display: "block",
           touchAction: track.audioBuffer ? "none" : "pan-x",
-          cursor: track.audioBuffer ? "grab" : "default",
+          cursor: cursorMap[editTool],
           pointerEvents: track.audioBuffer ? "auto" : "none",
         }}
         onPointerDown={onPointerDown}

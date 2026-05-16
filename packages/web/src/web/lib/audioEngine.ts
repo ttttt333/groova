@@ -104,7 +104,7 @@ class AudioEngine {
         source.loop = false;
 
         const gainNode = ctx.createGain();
-        gainNode.gain.value = track.volume ?? 1;
+        const vol = track.volume ?? 1;
 
         source.connect(gainNode);
         gainNode.connect(this.masterGain!);
@@ -113,12 +113,33 @@ class AudioEngine {
         const bufDuration = track.audioBuffer.duration;
         const trimEnd = track.trimEnd ?? bufDuration;
         const clipDuration = trimEnd - trimStart;
+        const fadeIn = track.fadeIn ?? 0;
+        const fadeOut = track.fadeOut ?? 0;
 
         if (offsetSeconds <= trimEnd) {
           const playFrom = Math.max(0, offsetSeconds - trimStart);
           const remaining = clipDuration - playFrom;
           if (remaining > 0.01) {
-            source.start(ctx.currentTime, trimStart + playFrom, remaining);
+            const startAt = ctx.currentTime;
+            const endAt = startAt + remaining;
+
+            // フェードイン
+            if (fadeIn > 0 && playFrom < fadeIn) {
+              gainNode.gain.setValueAtTime(0, startAt);
+              gainNode.gain.linearRampToValueAtTime(vol, startAt + (fadeIn - playFrom));
+              gainNode.gain.setValueAtTime(vol, startAt + (fadeIn - playFrom));
+            } else {
+              gainNode.gain.setValueAtTime(vol, startAt);
+            }
+
+            // フェードアウト
+            if (fadeOut > 0) {
+              const fadeOutStart = Math.max(startAt, endAt - fadeOut);
+              gainNode.gain.setValueAtTime(vol, fadeOutStart);
+              gainNode.gain.linearRampToValueAtTime(0, endAt);
+            }
+
+            source.start(startAt, trimStart + playFrom, remaining);
           }
         }
 
