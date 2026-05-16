@@ -1,5 +1,4 @@
 import { useRef, useEffect, useCallback, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { useGROOVA, TrackState } from "../lib/store";
 import { analyzeBPM, decodeAudioFile, extractWaveform } from "../lib/bpmAnalyzer";
 import { audioEngine } from "../lib/audioEngine";
@@ -60,36 +59,6 @@ function GridOverlay({
   );
 }
 
-function BpmToast({ bpm, trackName, color, onDone }: {
-  bpm: number; trackName: string; color: string; onDone: () => void;
-}) {
-  useEffect(() => {
-    const timer = setTimeout(onDone, 2500);
-    return () => clearTimeout(timer);
-  }, [onDone]);
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -30, scale: 0.9 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -20, scale: 0.9 }}
-      transition={{ type: "spring", damping: 20, stiffness: 300 }}
-      style={{
-        position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)",
-        zIndex: 100, background: "#111118ee", border: `1.5px solid ${color}66`,
-        borderRadius: 12, padding: "8px 16px", display: "flex", alignItems: "center",
-        gap: 10, backdropFilter: "blur(8px)", boxShadow: `0 4px 20px ${color}22`,
-      }}
-    >
-      <span style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 800, fontSize: 28, color, textShadow: `0 0 20px ${color}88`, lineHeight: 1 }}>
-        {bpm}
-      </span>
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <span style={{ fontSize: 10, color: "#888899", fontFamily: "Space Grotesk, sans-serif", fontWeight: 600 }}>BPM 検出</span>
-        <span style={{ fontSize: 11, color: "#ccccdd", fontFamily: "Space Grotesk, sans-serif", fontWeight: 500 }}>{trackName}</span>
-      </div>
-    </motion.div>
-  );
-}
 
 function formatTime(sec: number) {
   const m = Math.floor(sec / 60);
@@ -150,8 +119,7 @@ export default function Timeline() {
       if (useGROOVA.getState().trackOffsets[id] !== val) setTrackOffset(id, val);
     });
   };
-  const [bpmToast, setBpmToast] = useState<{ bpm: number; trackName: string; color: string } | null>(null);
-  const prevBpmRef = useRef<Record<string, number | null>>({});
+
   const pxPerSec = PIXELS_PER_SEC_BASE * zoomLevel;
 
   const topAudioTrack = tracks.find((t) => t.audioBuffer && t.beatPositions?.length > 0) ?? null;
@@ -173,15 +141,7 @@ export default function Timeline() {
     }
   }, [scrollResetCounter]);
 
-  useEffect(() => {
-    tracks.forEach((t) => {
-      const prev = prevBpmRef.current[t.id];
-      if ((prev === undefined || prev === null) && t.bpm && t.bpm > 0) {
-        setBpmToast({ bpm: t.bpm, trackName: t.name, color: t.color });
-      }
-      prevBpmRef.current[t.id] = t.bpm;
-    });
-  }, [tracks]);
+
 
   useEffect(() => {
     needsWaveRedraw.current = true;
@@ -852,15 +812,6 @@ export default function Timeline() {
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
     >
-      <AnimatePresence>
-        {bpmToast && (
-          <BpmToast
-            key={`${bpmToast.trackName}-${bpmToast.bpm}`}
-            bpm={bpmToast.bpm} trackName={bpmToast.trackName} color={bpmToast.color}
-            onDone={() => setBpmToast(null)}
-          />
-        )}
-      </AnimatePresence>
 
       <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
         {/* 左: ラベル列 */}

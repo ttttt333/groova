@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Play, Square, Zap, Grid3x3, ZoomIn, ZoomOut,
+  Play, Square, Pause, Zap, Grid3x3, ZoomIn, ZoomOut,
   Download, Sparkles, Music2, SkipBack, Volume2, Gauge
 } from "lucide-react";
 import { useGROOVA } from "../lib/store";
@@ -68,7 +68,8 @@ export default function GROOVAApp() {
     lastPlayTap.current = now;
 
     if (isPlaying) {
-      audioEngine.stop();
+      // 再生中 → 一時停止（現在位置保持）
+      audioEngine.pause();
       setIsPlaying(false);
     } else {
       audioEngine.unlockContext();
@@ -77,6 +78,13 @@ export default function GROOVAApp() {
     }
   };
 
+  /** 一時停止（現在位置保持） */
+  const handlePause = () => {
+    audioEngine.pause();
+    setIsPlaying(false);
+  };
+
+  /** 頭出し停止（先頭に戻る） */
   const handleStop = () => {
     audioEngine.stop();
     setIsPlaying(false);
@@ -206,7 +214,7 @@ export default function GROOVAApp() {
             gap: 6,
           }}
         >
-          {/* ⏮ */}
+          {/* ⏮ 頭出し */}
           <button
             onClick={handleStop}
             style={{
@@ -219,23 +227,40 @@ export default function GROOVAApp() {
             <SkipBack size={14} />
           </button>
 
-          {/* ▶ / ■ */}
+          {/* ⏸ 一時停止（再生中のみ表示） */}
+          {isPlaying && (
+            <button
+              onClick={handlePause}
+              style={{
+                width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
+                background: "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)",
+                border: "1.5px solid #ff6b2b88",
+                color: "#ff6b2b",
+                display: "flex", alignItems: "center",
+                justifyContent: "center", cursor: "pointer",
+              }}
+            >
+              <Pause size={14} fill="currentColor" />
+            </button>
+          )}
+
+          {/* ▶ 再生 */}
           <button
             onClick={handlePlay}
             style={{
-              width: 80, height: btnH, borderRadius: btnR, flexShrink: 0,
+              width: isPlaying ? btnH : 80, height: btnH, borderRadius: btnR, flexShrink: 0,
               background: isPlaying
-                ? "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)"
-                : "linear-gradient(135deg, #ffffff22, #ffffff11)",
-              border: `1.5px solid ${isPlaying ? "#ff6b2b88" : "#333344"}`,
-              color: isPlaying ? "#ff6b2b" : "white",
+                ? "linear-gradient(135deg, #ffffff22, #ffffff11)"
+                : "linear-gradient(135deg, #a8ff3e33, #a8ff3e11)",
+              border: `1.5px solid ${isPlaying ? "#33334488" : "#a8ff3e66"}`,
+              color: isPlaying ? "#9999aa" : "#a8ff3e",
               fontFamily: "Space Grotesk, sans-serif",
               fontWeight: 700, fontSize: 12,
               display: "flex", alignItems: "center",
               justifyContent: "center", gap: 5, cursor: "pointer",
             }}
           >
-            {isPlaying ? <><Square size={12} fill="currentColor" /> 停止</> : <><Play size={12} fill="currentColor" /> 再生</>}
+            {isPlaying ? <Play size={12} /> : <><Play size={12} fill="currentColor" /> 再生</>}
           </button>
 
           {/* 時間 */}
@@ -395,6 +420,7 @@ export default function GROOVAApp() {
 
             {/* トランスポートボタン */}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* ⏮ 頭出し */}
               <button
                 onClick={handleStop}
                 style={{
@@ -407,22 +433,40 @@ export default function GROOVAApp() {
                 <SkipBack size={16} />
               </button>
 
+              {/* ⏸ 一時停止（再生中のみ） */}
+              {isPlaying && (
+                <button
+                  onClick={handlePause}
+                  style={{
+                    width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
+                    background: "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)",
+                    border: "1.5px solid #ff6b2b88",
+                    color: "#ff6b2b",
+                    display: "flex", alignItems: "center",
+                    justifyContent: "center", cursor: "pointer",
+                  }}
+                >
+                  <Pause size={16} fill="currentColor" />
+                </button>
+              )}
+
+              {/* ▶ 再生 */}
               <button
                 onClick={handlePlay}
                 style={{
                   flex: 1, height: btnH, borderRadius: btnR,
                   background: isPlaying
-                    ? "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)"
-                    : "linear-gradient(135deg, #ffffff22, #ffffff11)",
-                  border: `1.5px solid ${isPlaying ? "#ff6b2b88" : "#333344"}`,
-                  color: isPlaying ? "#ff6b2b" : "white",
+                    ? "linear-gradient(135deg, #ffffff11, #ffffff08)"
+                    : "linear-gradient(135deg, #a8ff3e33, #a8ff3e11)",
+                  border: `1.5px solid ${isPlaying ? "#33334488" : "#a8ff3e66"}`,
+                  color: isPlaying ? "#9999aa" : "#a8ff3e",
                   fontFamily: "Space Grotesk, sans-serif",
                   fontWeight: 700, fontSize: 14,
                   display: "flex", alignItems: "center",
                   justifyContent: "center", gap: 6, cursor: "pointer",
                 }}
               >
-                {isPlaying ? <><Square size={14} fill="currentColor" /> 停止</> : <><Play size={14} fill="currentColor" /> 再生</>}
+                {isPlaying ? <Play size={14} /> : <><Play size={14} fill="currentColor" /> 再生</>}
               </button>
 
               <motion.button
@@ -536,27 +580,80 @@ export default function GROOVAApp() {
 }
 
 // ── BPM調整シート ──
-function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").TrackState[]; masterBpm: number }) {
-  const { updateTrack } = useGROOVA();
+function MasterBpmEditor({ masterBpm, setMasterBpm }: { masterBpm: number; setMasterBpm: (v: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(masterBpm));
+  useEffect(() => { if (!editing) setVal(String(masterBpm)); }, [masterBpm, editing]);
+  const commit = () => {
+    const n = parseFloat(val);
+    if (!isNaN(n) && n >= 40 && n <= 240) setMasterBpm(Math.round(n * 10) / 10);
+    setEditing(false);
+  };
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "10px 14px", borderRadius: 10, marginBottom: 14,
+      background: "linear-gradient(135deg, #a8ff3e18, #00f5ff10)",
+      border: "1px solid #a8ff3e33",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "linear-gradient(135deg, #a8ff3e, #00f5ff)" }} />
+        <span style={{ fontFamily: "Space Grotesk", fontSize: 13, color: "#a0a0c0", fontWeight: 600 }}>
+          マスター BPM
+        </span>
+      </div>
+      {editing ? (
+        <input
+          autoFocus
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => e.key === "Enter" && commit()}
+          style={{
+            background: "none", border: "none", outline: "none",
+            fontFamily: "JetBrains Mono, monospace", fontSize: 18, fontWeight: 700,
+            color: "#a8ff3e", width: 64, textAlign: "right",
+          }}
+        />
+      ) : (
+        <span
+          onClick={() => setEditing(true)}
+          style={{
+            fontFamily: "JetBrains Mono, monospace", fontSize: 18, fontWeight: 700,
+            background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
+            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+            cursor: "text",
+          }}
+        >
+          {masterBpm}
+        </span>
+      )}
+    </div>
+  );
+}
 
-  // React state 完全排除 — ref のみで BPM 管理（再レンダリングなし）
-  const targetBpmsRef = useRef<Record<string, number>>(() => {
+function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").TrackState[]; masterBpm: number }) {
+  const { updateTrack, setMasterBpm } = useGROOVA();
+
+  // 初期 targetBpm を一度だけ計算
+  const targetBpmsRef = useRef<Record<string, number>>({});
+  // マウント時のみ初期化（以降は applyBpm で更新）
+  useEffect(() => {
     const init: Record<string, number> = {};
     for (const t of tracks) {
       if (t.bpm && t.bpm > 0) {
         init[t.id] = Math.round((t.bpm * (t.speed ?? 1)) * 10) / 10;
       }
     }
-    return init;
-  });
-  // 初期化（useRef に関数渡しは使えないので別途）
-  if (Object.keys(targetBpmsRef.current).length === 0) {
+    targetBpmsRef.current = init;
+    // DOM も初期値で更新
     for (const t of tracks) {
       if (t.bpm && t.bpm > 0) {
-        targetBpmsRef.current[t.id] = Math.round((t.bpm * (t.speed ?? 1)) * 10) / 10;
+        updateDom(t.id, targetBpmsRef.current[t.id]);
       }
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // DOM refs — 各トラックの表示要素を直接更新
   const domRefs = useRef<Record<string, {
@@ -705,27 +802,8 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
         </span>
       </div>
 
-      {/* マスターBPM */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "10px 14px", borderRadius: 10, marginBottom: 14,
-        background: "linear-gradient(135deg, #a8ff3e18, #00f5ff10)",
-        border: "1px solid #a8ff3e33",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "linear-gradient(135deg, #a8ff3e, #00f5ff)" }} />
-          <span style={{ fontFamily: "Space Grotesk", fontSize: 13, color: "#a0a0c0", fontWeight: 600 }}>
-            マスター BPM
-          </span>
-        </div>
-        <span style={{
-          fontFamily: "JetBrains Mono, monospace", fontSize: 18, fontWeight: 700,
-          background: "linear-gradient(135deg, #a8ff3e, #00f5ff)",
-          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-        }}>
-          {masterBpm}
-        </span>
-      </div>
+      {/* マスターBPM — タップで編集可能 */}
+      <MasterBpmEditor masterBpm={masterBpm} setMasterBpm={setMasterBpm} />
 
       {/* トラック一覧 */}
       {audioTracks.length === 0 ? (

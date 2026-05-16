@@ -113,7 +113,7 @@ export default function SFXPanel() {
   const [pressed, setPressed] = useState<string | null>(null);
 
   const handleSFX = async (sfx: SFX) => {
-    await audioEngine.resumeContext();
+    await audioEngine.ensureRunning();
     playSynthSFX(sfx);
     setPressed(sfx.id);
     if ("vibrate" in navigator) navigator.vibrate(20);

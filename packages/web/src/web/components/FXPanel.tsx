@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
+import { audioEngine } from "../lib/audioEngine";
 
 type FX = {
   id: string;
@@ -34,11 +35,12 @@ export default function FXPanel() {
 
   const filtered = FX_LIST.filter((f) => f.category === category);
 
-  const handleApply = (fx: FX) => {
+  const handleApply = async (fx: FX) => {
     setActive(fx.id);
     if ("vibrate" in navigator) navigator.vibrate(30);
     setTimeout(() => setActive(null), 600);
-    // TODO: Apply actual audio FX via Web Audio API
+    await audioEngine.ensureRunning();
+    audioEngine.applyFX(fx.id);
   };
 
   return (
@@ -99,9 +101,7 @@ export default function FXPanel() {
         ))}
       </div>
 
-      <p style={{ fontSize: 11, color: "#2a2a3a", textAlign: "center" }}>
-        ※ FX機能は開発中です
-      </p>
+
     </div>
   );
 }

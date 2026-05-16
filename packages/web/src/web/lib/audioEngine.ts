@@ -198,6 +198,23 @@ class AudioEngine {
   }
 
   /**
+   * 一時停止 — 現在位置を保持してノードだけ停止。
+   * 再開は play(getCurrentTime()) で行う。
+   */
+  pause(): void {
+    // 現在位置を保存してから stop
+    this.offsetAt = this.getCurrentTime();
+    this.activeNodes.forEach(({ source }) => {
+      try { source.stop(); } catch {}
+    });
+    this.activeNodes.clear();
+    if (this.animFrame) {
+      cancelAnimationFrame(this.animFrame);
+      this.animFrame = null;
+    }
+  }
+
+  /**
    * プレイヘッドをシークする。
    * 再生中なら止めて新しい位置から再スタート。
    * 停止中なら offsetAt だけ更新。
@@ -237,6 +254,160 @@ class AudioEngine {
   private startAnimLoop(): void {
     // Timeline.tsx の rAF ループが getCurrentTime() を直接読むため、ここでは不要
     // (二重rAF + store書き込みによる全体再レンダリングを避ける)
+  }
+
+  /**
+   * FX — 短時間エフェクトをマスターに掛ける
+   * rise: フィルタが開いていく
+   * drop: ボリューム急落
+   * reverse: 逆再生シミュレーション（ピッチ下降）
+   * tapestop: ピッチ/速度急停止シミュレーション
+   * beatrepeat: 短いループ（グリッチ）
+   * bassdrop: ローパス+volume punch
+   * vocalchop: bandpassチョップ
+   * echo: フィードバックディレイ
+   * airspace: リバーブ風ホワイトノイズ
+   */
+  applyFX(fxId: string): void {
+    const ctx = this.getContext();
+    const now = ctx.currentTime;
+    const dest = this.masterGain ?? ctx.destination;
+
+    if (fxId === "rise") {
+      // ハイパスフィルタが徐々に開く
+      const filter = ctx.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(2000, now);
+      filter.frequency.exponentialRampToValueAtTime(20, now + 2);
+      filter.connect(dest);
+      // ノードを差し込む代わりに、短時間のホワイトノイズライズとして表現
+      const bufSize = ctx.sampleRate * 2;
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) d[i] = (Math.random() * 2 - 1) * 0.15;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.4, now + 1.5);
+      gain.gain.linearRampToValueAtTime(0, now + 2);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(now);
+    } else if (fxId === "drop") {
+      // masterGain を一瞬下げてから戻す
+      if (this.masterGain) {
+        const vol = this.masterGain.gain.value;
+        this.masterGain.gain.setValueAtTime(vol, now);
+        this.masterGain.gain.linearRampToValueAtTime(0, now + 0.3);
+        this.masterGain.gain.linearRampToValueAtTime(vol, now + 0.8);
+      }
+    } else if (fxId === "reverse") {
+      // ピッチ下降（全ノードのplaybackRate）
+      this.activeNodes.forEach(({ source }) => {
+        try {
+          source.playbackRate.setValueAtTime(source.playbackRate.value, now);
+          source.playbackRate.linearRampToValueAtTime(0.01, now + 1.5);
+          source.playbackRate.linearRampToValueAtTime(source.playbackRate.value, now + 2);
+        } catch {}
+      });
+    } else if (fxId === "tapestop") {
+      // 速度をゼロに急落
+      this.activeNodes.forEach(({ source }) => {
+        try {
+          const v = source.playbackRate.value;
+          source.playbackRate.setValueAtTime(v, now);
+          source.playbackRate.exponentialRampToValueAtTime(0.001, now + 1);
+          source.playbackRate.setValueAtTime(v, now + 1.05);
+        } catch {}
+      });
+    } else if (fxId === "beatrepeat") {
+      // 短いグリッチノイズバースト
+      for (let i = 0; i < 8; i++) {
+        const bufSize = Math.floor(ctx.sampleRate * 0.05);
+        const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let j = 0; j < bufSize; j++) d[j] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const gain = ctx.createGain();
+        gain.gain.value = 0.3;
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        src.start(now + i * 0.06);
+      }
+    } else if (fxId === "bassdrop") {
+      // サブベースパンチ
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(60, now);
+      osc.frequency.exponentialRampToValueAtTime(20, now + 1.5);
+      gain.gain.setValueAtTime(0.8, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 1.5);
+    } else if (fxId === "vocalchop") {
+      // バンドパスチョップ × 6
+      for (let i = 0; i < 6; i++) {
+        const osc = ctx.createOscillator();
+        const filter = ctx.createBiquadFilter();
+        const gain = ctx.createGain();
+        filter.type = "bandpass";
+        filter.frequency.value = 800 + i * 200;
+        osc.type = "sawtooth";
+        osc.frequency.value = 120 + i * 30;
+        gain.gain.setValueAtTime(0.15, now + i * 0.08);
+        gain.gain.setValueAtTime(0, now + i * 0.08 + 0.05);
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.08);
+        osc.stop(now + i * 0.08 + 0.07);
+      }
+    } else if (fxId === "echo") {
+      // フィードバックディレイ（ホワイトノイズベース）
+      const delay = ctx.createDelay(2);
+      delay.delayTime.value = 0.375; // 1/8 note at 160bpm approx
+      const feedback = ctx.createGain();
+      feedback.gain.value = 0.5;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.4, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 2);
+      const bufSize = ctx.sampleRate * 0.1;
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) d[i] = (Math.random() * 2 - 1) * 0.5;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(delay);
+      delay.connect(feedback);
+      feedback.connect(delay);
+      delay.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(now);
+    } else if (fxId === "airspace") {
+      // ホワイトノイズリバーブ風
+      const bufSize = ctx.sampleRate * 2.5;
+      const buf = ctx.createBuffer(2, bufSize, ctx.sampleRate);
+      for (let c = 0; c < 2; c++) {
+        const d = buf.getChannelData(c);
+        for (let i = 0; i < bufSize; i++) {
+          d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.8));
+        }
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 2.5);
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(now);
+    }
   }
 
   async exportWAV(sampleRate = 44100, bitDepth = 16): Promise<Blob> {

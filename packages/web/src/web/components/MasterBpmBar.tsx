@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useGROOVA } from "../lib/store";
 import { audioEngine } from "../lib/audioEngine";
 
@@ -127,8 +127,7 @@ export default function MasterBpmBar({ onSync, syncFlash, isLandscape, inline }:
         />
       )}
 
-      {/* Beat pulse indicator */}
-      <BeatPulse bpm={masterBpm} />
+
     </div>
   );
 
@@ -181,40 +180,4 @@ export default function MasterBpmBar({ onSync, syncFlash, isLandscape, inline }:
   );
 }
 
-// BeatPulse — state なし。DOM を直接操作して再レンダリングゼロ
-function BeatPulse({ bpm }: { bpm: number }) {
-  const dotRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const interval = 60000 / bpm;
-    let timeoutId: ReturnType<typeof setTimeout>;
-    const id = setInterval(() => {
-      if (dotRef.current) {
-        dotRef.current.style.background = "#a8ff3e";
-        dotRef.current.style.boxShadow = "0 0 8px #a8ff3e";
-      }
-      timeoutId = setTimeout(() => {
-        if (dotRef.current) {
-          dotRef.current.style.background = "#1a1a24";
-          dotRef.current.style.boxShadow = "none";
-        }
-      }, 80);
-    }, interval);
-    return () => {
-      clearInterval(id);
-      clearTimeout(timeoutId);
-    };
-  }, [bpm]);
-
-  return (
-    <div
-      ref={dotRef}
-      style={{
-        width: 8, height: 8, borderRadius: "50%",
-        background: "#1a1a24", boxShadow: "none",
-        transition: "background 0.05s, box-shadow 0.05s",
-        flexShrink: 0,
-      }}
-    />
-  );
-}
