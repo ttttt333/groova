@@ -12,6 +12,54 @@ const PIXELS_PER_SEC_BASE = 80;
 // ── ツールタイプ ──
 type EditTool = "move" | "split" | "trim" | "fade";
 
+/**
+ * GridOverlay — CSS background-image でグリッドを描画。
+ * BPM/ズームが変わっても CSS プロパティ変更のみ（再レンダリングなし）。
+ * 8カウント(=8拍)を1ブロックとし、4拍目に中間線、各拍に細い線を表示。
+ */
+function GridOverlay({
+  bpm,
+  pxPerSec,
+  rulerHeight,
+  totalHeight,
+}: {
+  bpm: number;
+  pxPerSec: number;
+  rulerHeight: number;
+  totalHeight: string | number;
+}) {
+  const beatPx = (60 / bpm) * pxPerSec;    // 1拍のピクセル幅
+  const bar8Px = beatPx * 8;               // 8拍（1小節×2）のピクセル幅
+  const bar4Px = beatPx * 4;               // 4拍のピクセル幅
+
+  // 重ね: 8カウント強線 + 4拍中間線 + 1拍細線
+  // linear-gradient の繰り返しで一切 JS ループなし
+  const bgImage = [
+    // 8カウント: rgba(168,255,62,0.5) — 1.5px
+    `repeating-linear-gradient(90deg, rgba(168,255,62,0.5) 0px, rgba(168,255,62,0.5) 1.5px, transparent 1.5px, transparent ${bar8Px}px)`,
+    // 4拍: rgba(168,255,62,0.2) — 1px
+    `repeating-linear-gradient(90deg, transparent 0px, transparent ${bar4Px - 1}px, rgba(168,255,62,0.2) ${bar4Px - 1}px, rgba(168,255,62,0.2) ${bar4Px}px, transparent ${bar4Px}px, transparent ${bar8Px}px)`,
+    // 1拍: rgba(168,255,62,0.07) — 1px
+    `repeating-linear-gradient(90deg, transparent 0px, transparent ${beatPx - 0.5}px, rgba(168,255,62,0.07) ${beatPx - 0.5}px, rgba(168,255,62,0.07) ${beatPx}px, transparent ${beatPx}px, transparent ${bar8Px}px)`,
+  ].join(", ");
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: rulerHeight,
+        left: 0,
+        width: "100%",
+        height: `calc(${totalHeight} - ${rulerHeight}px)`,
+        pointerEvents: "none",
+        zIndex: 1,
+        backgroundImage: bgImage,
+        backgroundRepeat: "repeat",
+      }}
+    />
+  );
+}
+
 function BpmToast({ bpm, trackName, color, onDone }: {
   bpm: number; trackName: string; color: string; onDone: () => void;
 }) {
@@ -137,8 +185,12 @@ export default function Timeline() {
 
   useEffect(() => {
     needsWaveRedraw.current = true;
+  }, [tracks, pxPerSec, trackOffsets]);
+
+  useEffect(() => {
+    // グリッドは CSS で描くのでルーラーのみ再描画
     needsRulerRedraw.current = true;
-  }, [tracks, pxPerSec, trackOffsets, showGrid, masterBpm]);
+  }, [pxPerSec, showGrid, masterBpm, maxDuration]);
 
   const playheadTimeRef = useRef(0);
   const isPlayingRef = useRef(isPlaying);
@@ -358,37 +410,7 @@ export default function Timeline() {
         ctx.fillRect(trimStartX + 2 + i * 3, H / 2 - 8, 1.5, 16);
       }
 
-      // ── 8カウントマーカー ──
-      if (showGridRef.current) {
-        const top = topAudioTrackRef.current;
-        if (top && top.id === track.id && top.beatPositions?.length > 0) {
-          const beats = top.beatPositions;
-          const topOffset = trackOffsetsRef.current[top.id] || 0;
-          beats.forEach((beatTime, i) => {
-            if (i % 8 !== 0) return;
-            const countNum = Math.floor(i / 8) + 1;
-            const bx = (topOffset + beatTime) * pxPerSec;
-            if (bx < 0 || bx > W) return;
-            ctx.strokeStyle = "#a8ff3ecc";
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.moveTo(bx, 0);
-            ctx.lineTo(bx, H);
-            ctx.stroke();
-            ctx.fillStyle = "#a8ff3e";
-            ctx.beginPath();
-            ctx.moveTo(bx - 5, 0);
-            ctx.lineTo(bx + 5, 0);
-            ctx.lineTo(bx, 8);
-            ctx.closePath();
-            ctx.fill();
-            ctx.fillStyle = "#a8ff3e";
-            ctx.font = "bold 8px JetBrains Mono, monospace";
-            ctx.fillText(String(countNum), bx + 3, 20);
-          });
-        }
-      }
+      // 8カウントグリッドはCSSオーバーレイで描画するためCanvasでの描画は省略
     } else {
       ctx.strokeStyle = "#2a2a3a";
       ctx.lineWidth = 1;
@@ -423,40 +445,13 @@ export default function Timeline() {
     const H = canvas.height;
     const pxPerSec = pxPerSecRef.current;
     const maxDuration = maxDurationRef.current;
-    const masterBpm = masterBpmRef.current;
-    const showGrid = showGridRef.current;
 
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#0a0a0f";
     ctx.fillRect(0, 0, W, H);
 
+    // グリッドはCSSオーバーレイ(GridOverlay)で描画 — ここはタイムラベルのみ
     const stepSec = pxPerSec > 120 ? 1 : pxPerSec > 60 ? 2 : pxPerSec > 30 ? 4 : 8;
-    const beatSec = 60 / masterBpm;
-
-    if (showGrid) {
-      let t = 0;
-      let beatIdx = 0;
-      while (t <= maxDuration) {
-        const x = t * pxPerSec;
-        const beat = beatIdx % 8;
-        if (beat === 0) {
-          ctx.strokeStyle = "rgba(168,255,62,0.5)";
-          ctx.lineWidth = 1.5;
-        } else if (beat === 4) {
-          ctx.strokeStyle = "rgba(168,255,62,0.25)";
-          ctx.lineWidth = 1;
-        } else {
-          ctx.strokeStyle = "rgba(168,255,62,0.08)";
-          ctx.lineWidth = 0.5;
-        }
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, H);
-        ctx.stroke();
-        t += beatSec;
-        beatIdx++;
-      }
-    }
 
     ctx.font = "9px JetBrains Mono, monospace";
     let t = 0;
@@ -939,6 +934,16 @@ export default function Timeline() {
           }}
         >
           <div style={{ width: canvasWidth, position: "relative", minHeight: "100%" }}>
+
+            {/* CSS グリッドオーバーレイ — BPM変更時も再描画ゼロ */}
+            {showGrid && (
+              <GridOverlay
+                bpm={masterBpm}
+                pxPerSec={pxPerSec}
+                rulerHeight={RULER_HEIGHT}
+                totalHeight="100%"
+              />
+            )}
 
             {/* ルーラー */}
             <div style={{ height: RULER_HEIGHT, position: "relative", flexShrink: 0 }}>

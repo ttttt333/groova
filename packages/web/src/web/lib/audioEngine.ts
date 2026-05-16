@@ -197,6 +197,20 @@ class AudioEngine {
     }
   }
 
+  /**
+   * プレイヘッドをシークする。
+   * 再生中なら止めて新しい位置から再スタート。
+   * 停止中なら offsetAt だけ更新。
+   */
+  seekTo(offsetSeconds: number): void {
+    const wasPlaying = useGROOVA.getState().isPlaying;
+    this.stop();
+    this.offsetAt = Math.max(0, offsetSeconds);
+    if (wasPlaying) {
+      this.play(this.offsetAt);
+    }
+  }
+
   getCurrentTime(): number {
     if (!this.ctx || !useGROOVA.getState().isPlaying) return this.offsetAt;
     return this.offsetAt + (this.ctx.currentTime - this.startedAt);
