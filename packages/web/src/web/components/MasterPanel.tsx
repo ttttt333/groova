@@ -49,6 +49,15 @@ export default function MasterPanel() {
     bpmRafRef.current = null;
     pendingBpmRef.current = null;
     setMasterBpm(val);
+    // 再生中なら全トラックの playbackRate をリアルタイム更新
+    const { tracks, isPlaying } = useGROOVA.getState();
+    if (isPlaying) {
+      const speeds: Record<string, number> = {};
+      tracks.forEach((t) => {
+        if (t.bpm && t.bpm > 0) speeds[t.id] = val / t.bpm;
+      });
+      audioEngine.updateAllSpeeds(speeds);
+    }
   };
 
   const handleBpmChange = (val: string) => {
