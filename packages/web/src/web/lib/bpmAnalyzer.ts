@@ -196,13 +196,14 @@ function pickBeatPositions(
   bpm: number,
   sampleRate: number,
   hopSize: number,
-  duration: number
+  duration: number,
+  skipSec: number = 0  // セグメント開始のオフセット（秒）
 ): number[] {
   const beatInterval = 60 / bpm;
   const secPerFrame = hopSize / sampleRate;
   const framesPerBeat = beatInterval / secPerFrame;
-  const positions: number[] = [];
 
+  // セグメント内でフェーズを最適化
   let bestPhase = 0;
   let bestScore = -1;
   const searchSteps = Math.ceil(framesPerBeat);
@@ -220,7 +221,18 @@ function pickBeatPositions(
     }
   }
 
-  let t = bestPhase * secPerFrame;
+  // セグメント内での最初のビート時刻（セグメント相対）
+  const firstBeatInSegment = bestPhase * secPerFrame;
+
+  // 音声全体の時刻に変換（skipSec + セグメント内時刻）
+  const absoluteFirstBeat = skipSec + firstBeatInSegment;
+
+  // 音声先頭に向かって逆方向に延伸し、t=0 以降の最初のビートを求める
+  let t = absoluteFirstBeat;
+  while (t >= beatInterval) t -= beatInterval;
+  // t は now in [0, beatInterval)
+
+  const positions: number[] = [];
   while (t < duration) {
     positions.push(Math.round(t * 1000) / 1000);
     t += beatInterval;
@@ -284,7 +296,8 @@ export async function analyzeBPM(audioBuffer: AudioBuffer): Promise<BPMResult> {
   bpm = Math.round(bpm * 10) / 10;
 
   const confidence = Math.max(rmsResult.confidence, fluxResult.confidence);
-  const beatPositions = pickBeatPositions(bestOnsets, bpm, sampleRate, hopSize, duration);
+  const skipSec = skip / sampleRate;  // セグメントのオフセット（秒）を渡す
+  const beatPositions = pickBeatPositions(bestOnsets, bpm, sampleRate, hopSize, duration, skipSec);
   const downbeatPositions = beatPositions.filter((_, i) => i % 4 === 0);
 
   return { bpm, confidence, beatPositions, downbeatPositions };

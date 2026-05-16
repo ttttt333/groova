@@ -85,52 +85,68 @@ export default function WaveformCanvas({ track, height = 80, onTrimChange }: Pro
       ctx.fill();
     }
 
-    // 8-Count Grid
-    if (showGrid && duration > 0 && masterBpm > 0) {
-      const secPerBeat = 60 / masterBpm;
-      const secPer8Count = secPerBeat * 8;
-      let t = 0;
-      let beatIdx = 0;
+    // 8-Count Grid — beatPositions 基準（解析済みなら）、なければ BPM 固定
+    if (showGrid && duration > 0) {
+      const beats = track.beatPositions;
+      const hasBeatPositions = beats && beats.length > 0;
 
-      while (t <= duration) {
-        const x = (t / duration) * W;
-        const beat = beatIdx % 8;
+      if (hasBeatPositions) {
+        // 解析済みのビート位置を使う（正確）
+        beats.forEach((beatTime, i) => {
+          if (beatTime < 0 || beatTime > duration) return;
+          const x = (beatTime / duration) * W;
+          const beat = i % 8;
 
-        if (beat === 0) {
-          // 1拍目 — thick acid green
-          ctx.strokeStyle = "rgba(168, 255, 62, 0.9)";
-          ctx.lineWidth = 2;
-        } else if (beat === 4) {
-          // 4拍目 — mid green
-          ctx.strokeStyle = "rgba(168, 255, 62, 0.5)";
-          ctx.lineWidth = 1.5;
-        } else {
-          // Other beats — dim
-          ctx.strokeStyle = "rgba(168, 255, 62, 0.2)";
-          ctx.lineWidth = 0.5;
+          if (beat === 0) {
+            ctx.strokeStyle = "rgba(168, 255, 62, 0.9)";
+            ctx.lineWidth = 2;
+          } else if (beat === 4) {
+            ctx.strokeStyle = "rgba(168, 255, 62, 0.5)";
+            ctx.lineWidth = 1.5;
+          } else {
+            ctx.strokeStyle = "rgba(168, 255, 62, 0.2)";
+            ctx.lineWidth = 0.5;
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+
+          if (beat === 0) {
+            const countNum = Math.floor(i / 8) + 1;
+            ctx.fillStyle = "rgba(168, 255, 62, 0.7)";
+            ctx.font = "9px JetBrains Mono, monospace";
+            ctx.fillText(`[${countNum}]`, x + 2, 10);
+          }
+        });
+      } else if (masterBpm > 0) {
+        // 解析前フォールバック：BPM固定グリッド
+        const secPerBeat = 60 / masterBpm;
+        let t = 0;
+        let beatIdx = 0;
+        while (t <= duration) {
+          const x = (t / duration) * W;
+          const beat = beatIdx % 8;
+          ctx.strokeStyle = beat === 0
+            ? "rgba(168, 255, 62, 0.9)"
+            : beat === 4
+              ? "rgba(168, 255, 62, 0.5)"
+              : "rgba(168, 255, 62, 0.2)";
+          ctx.lineWidth = beat === 0 ? 2 : beat === 4 ? 1.5 : 0.5;
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+          if (beat === 0) {
+            ctx.fillStyle = "rgba(168, 255, 62, 0.7)";
+            ctx.font = "9px JetBrains Mono, monospace";
+            ctx.fillText(`[${Math.floor(beatIdx / 8) + 1}]`, x + 2, 10);
+          }
+          t += secPerBeat;
+          beatIdx++;
         }
-
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, H);
-        ctx.stroke();
-
-        // 8-count label
-        if (beat === 0) {
-          ctx.fillStyle = "rgba(168, 255, 62, 0.7)";
-          ctx.font = "9px JetBrains Mono, monospace";
-          const count = Math.round(t / secPer8Count) + 1;
-          ctx.fillText(`[${count}]`, x + 2, 10);
-        }
-
-        t += secPerBeat;
-        beatIdx++;
       }
-    }
-
-    // Beat positions from analysis
-    if (track.beatPositions.length > 0 && duration > 0) {
-      // Already handled by grid above
     }
 
     // Playhead
