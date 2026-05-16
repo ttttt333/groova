@@ -512,11 +512,11 @@ export default function GROOVAApp() {
               style={{
                 position: "fixed", bottom: 0, left: 0, right: 0,
                 margin: "0 auto",
-                width: "100%", maxWidth: 480,
+                width: "100%",
                 background: "#111118",
                 borderRadius: "20px 20px 0 0",
                 border: "1px solid #1a1a24", borderBottom: "none",
-                zIndex: 50, maxHeight: "60vh", overflowY: "auto",
+                zIndex: 50, maxHeight: "70vh", overflowY: "auto",
               }}
             >
               <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
@@ -551,63 +551,64 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
     return init;
   });
 
-  // 長押し連続変化用 ref
-  const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 長押し用 ref
+  const holdRef = useRef<{ timeout: ReturnType<typeof setTimeout> | null; interval: ReturnType<typeof setInterval> | null }>({ timeout: null, interval: null });
+  // 現在のBPM値をrefでも持つ（setInterval内でstale closureにならないため）
+  const targetBpmsRef = useRef(targetBpms);
+  useEffect(() => { targetBpmsRef.current = targetBpms; }, [targetBpms]);
 
+  // stale closure なし — 毎回 store と ref から直接取得
   const applyBpm = useCallback((trackId: string, newTargetBpm: number) => {
-    const track = tracks.find((t) => t.id === trackId);
+    const track = useGROOVA.getState().tracks.find((t) => t.id === trackId);
     if (!track || !track.bpm || track.bpm === 0) return;
     const clamped = Math.min(300, Math.max(40, Math.round(newTargetBpm * 10) / 10));
     const newSpeed = clamped / track.bpm;
+    targetBpmsRef.current = { ...targetBpmsRef.current, [trackId]: clamped };
     setTargetBpms((prev) => ({ ...prev, [trackId]: clamped }));
     updateTrack(trackId, { speed: newSpeed });
     audioEngine.updateSpeed(trackId, newSpeed);
-  }, [tracks, updateTrack]);
+  }, [updateTrack]);
 
-  const handleReset = (trackId: string) => {
-    const track = tracks.find((t) => t.id === trackId);
+  const handleReset = useCallback((trackId: string) => {
+    const track = useGROOVA.getState().tracks.find((t) => t.id === trackId);
     if (!track || !track.bpm || track.bpm === 0) return;
     const original = Math.round(track.bpm * 10) / 10;
+    targetBpmsRef.current = { ...targetBpmsRef.current, [trackId]: original };
     setTargetBpms((prev) => ({ ...prev, [trackId]: original }));
     updateTrack(trackId, { speed: 1 });
     audioEngine.updateSpeed(trackId, 1);
-  };
+  }, [updateTrack]);
 
-  const startHold = (trackId: string, delta: number, currentBpm: number) => {
+  const stopHold = useCallback(() => {
+    if (holdRef.current.timeout) { clearTimeout(holdRef.current.timeout); holdRef.current.timeout = null; }
+    if (holdRef.current.interval) { clearInterval(holdRef.current.interval); holdRef.current.interval = null; }
+  }, []);
+
+  const startHold = useCallback((trackId: string, delta: number) => {
+    stopHold();
     // 即時1回
-    applyBpm(trackId, currentBpm + delta);
-    // 500ms後に連続開始
-    const timeout = setTimeout(() => {
-      holdTimerRef.current = setInterval(() => {
-        setTargetBpms((prev) => {
-          const next = Math.min(300, Math.max(40, Math.round((prev[trackId] + delta) * 10) / 10));
-          applyBpm(trackId, next);
-          return prev; // applyBpm 内で更新するので prev を返す
-        });
-      }, 80);
-    }, 400);
-    holdTimerRef.current = timeout as unknown as ReturnType<typeof setInterval>;
-  };
-
-  const stopHold = () => {
-    if (holdTimerRef.current !== null) {
-      clearTimeout(holdTimerRef.current as unknown as ReturnType<typeof setTimeout>);
-      clearInterval(holdTimerRef.current);
-      holdTimerRef.current = null;
-    }
-  };
+    const cur0 = targetBpmsRef.current[trackId];
+    if (cur0 !== undefined) applyBpm(trackId, cur0 + delta);
+    // 350ms後に連続開始
+    holdRef.current.timeout = setTimeout(() => {
+      holdRef.current.interval = setInterval(() => {
+        // ref から最新値を取得 → stale closure なし
+        const cur = targetBpmsRef.current[trackId];
+        if (cur !== undefined) applyBpm(trackId, cur + delta);
+      }, 60);
+    }, 350);
+  }, [applyBpm, stopHold]);
 
   const audioTracks = tracks.filter((t) => t.audioBuffer && t.bpm && t.bpm > 0);
 
   const BpmStepBtn = ({
-    label, trackId, delta, currentBpm,
-  }: { label: string; trackId: string; delta: number; currentBpm: number }) => (
+    label, trackId, delta,
+  }: { label: string; trackId: string; delta: number }) => (
     <button
-      onMouseDown={() => startHold(trackId, delta, currentBpm)}
-      onMouseUp={stopHold}
-      onMouseLeave={stopHold}
-      onTouchStart={(e) => { e.preventDefault(); startHold(trackId, delta, currentBpm); }}
-      onTouchEnd={stopHold}
+      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); startHold(trackId, delta); }}
+      onPointerUp={stopHold}
+      onPointerLeave={stopHold}
+      onPointerCancel={stopHold}
       style={{
         flex: 1, padding: "8px 0", borderRadius: 8,
         background: "#1e1e2e", border: "1px solid #2e2e44",
@@ -737,10 +738,10 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
 
                 {/* ── ±ボタン行 ── */}
                 <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-                  <BpmStepBtn label="−1" trackId={track.id} delta={-1} currentBpm={currentTarget} />
-                  <BpmStepBtn label="−0.1" trackId={track.id} delta={-0.1} currentBpm={currentTarget} />
-                  <BpmStepBtn label="+0.1" trackId={track.id} delta={+0.1} currentBpm={currentTarget} />
-                  <BpmStepBtn label="+1" trackId={track.id} delta={+1} currentBpm={currentTarget} />
+                  <BpmStepBtn label="−1" trackId={track.id} delta={-1} />
+                  <BpmStepBtn label="−0.1" trackId={track.id} delta={-0.1} />
+                  <BpmStepBtn label="+0.1" trackId={track.id} delta={+0.1} />
+                  <BpmStepBtn label="+1" trackId={track.id} delta={+1} />
                 </div>
 
                 {/* ── スライダー (補助) ── */}
