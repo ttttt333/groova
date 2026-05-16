@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from "react";
+import { Scissors } from "lucide-react";
 import { useGROOVA, TrackState, EditTool } from "../lib/store";
 import { analyzeBPM, decodeAudioFile, extractWaveform } from "../lib/bpmAnalyzer";
 import { audioEngine } from "../lib/audioEngine";
@@ -64,7 +65,7 @@ function formatTime(sec: number) {
   return `${m}:${String(s).padStart(2, "0")}.${ms}`;
 }
 
-export default function Timeline() {
+export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }) {
   const {
     tracks, updateTrack, masterBpm, showGrid,
     setPlayheadTime, isPlaying, zoomLevel, addTrack, setMasterBpm,
@@ -965,14 +966,42 @@ export default function Timeline() {
               style={{
                 position: "absolute", top: 0, left: 0,
                 width: 2, height: "100%",
-                background: "rgba(255,255,255,0.9)",
+                background: "rgba(255,80,80,0.85)",
                 pointerEvents: "none", zIndex: 20,
                 willChange: "transform",
               }}
             >
+              {/* Filmoraスタイル: ハサミ丸ボタン */}
+              {onSplitClick && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onSplitClick(); }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  style={{
+                    position: "absolute",
+                    top: RULER_HEIGHT - 2,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: 28, height: 28, borderRadius: "50%",
+                    background: "linear-gradient(135deg, #ff4040, #cc2020)",
+                    border: "2px solid rgba(255,255,255,0.3)",
+                    color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    cursor: "pointer",
+                    pointerEvents: "auto",
+                    zIndex: 21,
+                    boxShadow: "0 2px 8px rgba(255,60,60,0.6)",
+                    touchAction: "manipulation",
+                    WebkitTapHighlightColor: "transparent",
+                  }}
+                >
+                  <Scissors size={12} />
+                </button>
+              )}
+              {/* ルーラーヘッド三角 */}
               <div style={{
-                position: "absolute", top: RULER_HEIGHT - 8, left: -5,
-                width: 12, height: 12, background: "white",
+                position: "absolute", top: 0, left: -5,
+                width: 12, height: 12,
+                background: "rgba(255,80,80,0.9)",
                 clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
               }} />
             </div>

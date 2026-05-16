@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Play, Square, Pause, Zap, Grid3x3, ZoomIn, ZoomOut,
-  Download, Sparkles, Music2, SkipBack, Volume2, Gauge, Scissors, ChevronRight
+  Play, Pause, Zap, Grid3x3, ZoomIn, ZoomOut,
+  Download, Sparkles, Music2, SkipBack, Volume2, Gauge, Scissors
 } from "lucide-react";
 import { useGROOVA } from "../lib/store";
 import { audioEngine } from "../lib/audioEngine";
@@ -197,7 +197,7 @@ export default function GROOVAApp() {
 
       {/* ── Timeline ── */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <Timeline />
+        <Timeline onSplitClick={() => toggleSheet("split")} />
       </div>
 
       {/* ── Transport bar ── */}
@@ -227,39 +227,7 @@ export default function GROOVAApp() {
             <SkipBack size={14} />
           </button>
 
-          {/* ✂ 分割 */}
-          <button
-            onClick={() => toggleSheet("split")}
-            style={{
-              width: btnH, height: btnH, borderRadius: btnR,
-              background: sheet === "split" ? "#ff6b2b22" : "#1a1a24",
-              border: `1px solid ${sheet === "split" ? "#ff6b2b88" : "#2a2a3a"}`,
-              color: sheet === "split" ? "#ff6b2b" : "#9999aa",
-              display: "flex", alignItems: "center",
-              justifyContent: "center", cursor: "pointer", flexShrink: 0,
-            }}
-          >
-            <Scissors size={14} />
-          </button>
-
-          {/* ⏸ 一時停止（再生中のみ表示） */}
-          {isPlaying && (
-            <button
-              onClick={handlePause}
-              style={{
-                width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
-                background: "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)",
-                border: "1.5px solid #ff6b2b88",
-                color: "#ff6b2b",
-                display: "flex", alignItems: "center",
-                justifyContent: "center", cursor: "pointer",
-              }}
-            >
-              <Pause size={14} fill="currentColor" />
-            </button>
-          )}
-
-          {/* ▶ 再生 */}
+          {/* ▶/⏸ 再生トグル */}
           <button
             onClick={handlePlay}
             style={{
@@ -275,7 +243,7 @@ export default function GROOVAApp() {
               justifyContent: "center", gap: 5, cursor: "pointer",
             }}
           >
-            {isPlaying ? <Play size={12} /> : <><Play size={12} fill="currentColor" /> 再生</>}
+            {isPlaying ? <Pause size={12} fill="currentColor" /> : <><Play size={12} fill="currentColor" /> 再生</>}
           </button>
 
           {/* 時間 */}
@@ -448,39 +416,7 @@ export default function GROOVAApp() {
                 <SkipBack size={16} />
               </button>
 
-              {/* ✂ 分割 */}
-              <button
-                onClick={() => toggleSheet("split")}
-                style={{
-                  width: btnH, height: btnH, borderRadius: btnR,
-                  background: sheet === "split" ? "#ff6b2b22" : "#1a1a24",
-                  border: `1px solid ${sheet === "split" ? "#ff6b2b88" : "#2a2a3a"}`,
-                  color: sheet === "split" ? "#ff6b2b" : "#9999aa",
-                  display: "flex", alignItems: "center",
-                  justifyContent: "center", cursor: "pointer", flexShrink: 0,
-                }}
-              >
-                <Scissors size={16} />
-              </button>
-
-              {/* ⏸ 一時停止（再生中のみ） */}
-              {isPlaying && (
-                <button
-                  onClick={handlePause}
-                  style={{
-                    width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
-                    background: "linear-gradient(135deg, #ff6b2b44, #ff6b2b22)",
-                    border: "1.5px solid #ff6b2b88",
-                    color: "#ff6b2b",
-                    display: "flex", alignItems: "center",
-                    justifyContent: "center", cursor: "pointer",
-                  }}
-                >
-                  <Pause size={16} fill="currentColor" />
-                </button>
-              )}
-
-              {/* ▶ 再生 */}
+              {/* ▶/⏸ 再生トグル */}
               <button
                 onClick={handlePlay}
                 style={{
@@ -496,7 +432,7 @@ export default function GROOVAApp() {
                   justifyContent: "center", gap: 6, cursor: "pointer",
                 }}
               >
-                {isPlaying ? <Play size={14} /> : <><Play size={14} fill="currentColor" /> 再生</>}
+                {isPlaying ? <Pause size={14} fill="currentColor" /> : <><Play size={14} fill="currentColor" /> 再生</>}
               </button>
 
               <motion.button
