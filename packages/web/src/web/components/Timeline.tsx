@@ -145,10 +145,9 @@ export default function Timeline() {
 
   useEffect(() => {
     needsWaveRedraw.current = true;
-  }, [tracks, pxPerSec, trackOffsets]);
+  }, [tracks, pxPerSec, trackOffsets, showGrid, masterBpm]);
 
   useEffect(() => {
-    // グリッドは CSS で描くのでルーラーのみ再描画
     needsRulerRedraw.current = true;
   }, [pxPerSec, showGrid, masterBpm, maxDuration]);
 
@@ -370,7 +369,47 @@ export default function Timeline() {
         ctx.fillRect(trimStartX + 2 + i * 3, H / 2 - 8, 1.5, 16);
       }
 
-      // 8カウントグリッドはCSSオーバーレイで描画するためCanvasでの描画は省略
+      // ── BPM グリッド（Canvas描画 — offset考慮） ──
+      if (showGridRef.current && masterBpmRef.current > 0) {
+        const bpm = masterBpmRef.current;
+        const beatPx = (60 / bpm) * pxPerSec;  // 1拍のピクセル幅
+        const bar8Px = beatPx * 8;              // 8拍
+
+        // クリップ内のみ描画（クリップ境界でクリップ）
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(trimStartX, 0, clipW, H);
+        ctx.clip();
+
+        // 最初のビートの位置（clipX=offset*pxPerSec が基準）
+        // タイムライン0秒からbeatPxごとのグリッド
+        const firstBeat = Math.floor(clipX / beatPx) * beatPx;
+
+        let x = firstBeat;
+        while (x <= trimEndX + 1) {
+          if (x >= trimStartX - 1) {
+            const beatIndex = Math.round(x / beatPx);
+            const isBar8 = beatIndex % 8 === 0;
+            const isBar4 = beatIndex % 4 === 0;
+            if (isBar8) {
+              ctx.strokeStyle = "rgba(168,255,62,0.45)";
+              ctx.lineWidth = 1.5;
+            } else if (isBar4) {
+              ctx.strokeStyle = "rgba(168,255,62,0.18)";
+              ctx.lineWidth = 1;
+            } else {
+              ctx.strokeStyle = "rgba(168,255,62,0.06)";
+              ctx.lineWidth = 0.8;
+            }
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, H);
+            ctx.stroke();
+          }
+          x += beatPx;
+        }
+        ctx.restore();
+      }
     } else {
       ctx.strokeStyle = "#2a2a3a";
       ctx.lineWidth = 1;
@@ -885,16 +924,6 @@ export default function Timeline() {
           }}
         >
           <div style={{ width: canvasWidth, position: "relative", minHeight: "100%" }}>
-
-            {/* CSS グリッドオーバーレイ — BPM変更時も再描画ゼロ */}
-            {showGrid && (
-              <GridOverlay
-                bpm={masterBpm}
-                pxPerSec={pxPerSec}
-                rulerHeight={RULER_HEIGHT}
-                totalHeight="100%"
-              />
-            )}
 
             {/* ルーラー */}
             <div style={{ height: RULER_HEIGHT, position: "relative", flexShrink: 0 }}>

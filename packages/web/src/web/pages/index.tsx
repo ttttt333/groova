@@ -635,6 +635,10 @@ function MasterBpmEditor({ masterBpm, setMasterBpm }: { masterBpm: number; setMa
 function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").TrackState[]; masterBpm: number }) {
   const { updateTrack, setMasterBpm } = useGROOVA();
 
+  // masterBpm を ref で保持（updateDom クロージャ内で最新値を参照するため）
+  const masterBpmRef = useRef(masterBpm);
+  useEffect(() => { masterBpmRef.current = masterBpm; }, [masterBpm]);
+
   // 初期 targetBpm を一度だけ計算
   const targetBpmsRef = useRef<Record<string, number>>({});
   // マウント時のみ初期化（以降は applyBpm で更新）
@@ -676,14 +680,14 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
     }, 200);
   }, [updateTrack]);
 
-  // DOM 直接更新（再レンダリングなし）
+  // DOM 直接更新（再レンダリングなし）— masterBpmRef 経由で常に最新値を参照
   const updateDom = useCallback((trackId: string, clamped: number) => {
     const track = useGROOVA.getState().tracks.find((t) => t.id === trackId);
     if (!track?.bpm) return;
     const originalBpm = track.bpm;
     const isChanged = Math.abs(clamped - originalBpm) > 0.05;
     const speedRatio = clamped / originalBpm;
-    const diffFromMaster = Math.round((clamped - masterBpm) * 10) / 10;
+    const diffFromMaster = Math.round((clamped - masterBpmRef.current) * 10) / 10;
     const diffColor = Math.abs(diffFromMaster) < 1 ? "#a8ff3e" : Math.abs(diffFromMaster) < 5 ? "#ffcc44" : "#ff6b44";
     const refs = domRefs.current[trackId];
     if (!refs) return;
@@ -708,7 +712,15 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
     if (refs.slider) refs.slider.value = String(clamped);
     if (refs.card) refs.card.style.borderColor = isChanged ? "#a8ff3e33" : "#2a2a3a";
     if (refs.resetBtn) refs.resetBtn.style.display = isChanged ? "block" : "none";
-  }, [masterBpm]);
+  }, []); // masterBpmRef で参照するためクロージャ依存なし
+
+  // masterBpm 変更時 → 全トラックの diff バッジを即時再計算
+  useEffect(() => {
+    for (const t of tracks) {
+      const cur = targetBpmsRef.current[t.id];
+      if (cur !== undefined) updateDom(t.id, cur);
+    }
+  }, [masterBpm, updateDom]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyBpm = useCallback((trackId: string, newTargetBpm: number) => {
     const track = useGROOVA.getState().tracks.find((t) => t.id === trackId);
