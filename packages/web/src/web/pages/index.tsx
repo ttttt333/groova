@@ -220,9 +220,8 @@ export default function GROOVAApp() {
           </button>
 
           {/* ▶ / ■ */}
-          <motion.button
+          <button
             onClick={handlePlay}
-            whileTap={{ scale: 0.93 }}
             style={{
               width: 80, height: btnH, borderRadius: btnR, flexShrink: 0,
               background: isPlaying
@@ -237,7 +236,7 @@ export default function GROOVAApp() {
             }}
           >
             {isPlaying ? <><Square size={12} fill="currentColor" /> 停止</> : <><Play size={12} fill="currentColor" /> 再生</>}
-          </motion.button>
+          </button>
 
           {/* 時間 */}
           <span
@@ -292,8 +291,8 @@ export default function GROOVAApp() {
           <motion.button
             onClick={handleSync}
             disabled={!hasAudio}
-            whileTap={{ scale: 0.93 }}
             animate={syncFlash ? { scale: [1, 1.08, 1] } : {}}
+            transition={{ duration: 0.25 }}
             style={{
               width: 48, height: btnH, borderRadius: btnR, flexShrink: 0,
               background: syncFlash ? "linear-gradient(135deg, #a8ff3e, #00f5ff)" : hasAudio ? "#a8ff3e22" : "#0a0a0f",
@@ -408,9 +407,8 @@ export default function GROOVAApp() {
                 <SkipBack size={16} />
               </button>
 
-              <motion.button
+              <button
                 onClick={handlePlay}
-                whileTap={{ scale: 0.93 }}
                 style={{
                   flex: 1, height: btnH, borderRadius: btnR,
                   background: isPlaying
@@ -425,13 +423,13 @@ export default function GROOVAApp() {
                 }}
               >
                 {isPlaying ? <><Square size={14} fill="currentColor" /> 停止</> : <><Play size={14} fill="currentColor" /> 再生</>}
-              </motion.button>
+              </button>
 
               <motion.button
                 onClick={handleSync}
                 disabled={!hasAudio}
-                whileTap={{ scale: 0.93 }}
                 animate={syncFlash ? { scale: [1, 1.08, 1] } : {}}
+                transition={{ duration: 0.25 }}
                 style={{
                   width: 56, height: btnH, borderRadius: btnR, flexShrink: 0,
                   background: syncFlash
@@ -614,7 +612,6 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
         background: "#1e1e2e", border: "1px solid #2e2e44",
         color: "#c0c0d8", fontFamily: "JetBrains Mono", fontSize: 13, fontWeight: 700,
         cursor: "pointer", userSelect: "none", WebkitUserSelect: "none",
-        transition: "background 0.1s",
       }}
       onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#2a2a40"; }}
     >
