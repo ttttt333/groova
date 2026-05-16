@@ -539,7 +539,8 @@ export default function GROOVAApp() {
 function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").TrackState[]; masterBpm: number }) {
   const { updateTrack } = useGROOVA();
 
-  const [targetBpms, setTargetBpms] = useState<Record<string, number>>(() => {
+  // React state 完全排除 — ref のみで BPM 管理（再レンダリングなし）
+  const targetBpmsRef = useRef<Record<string, number>>(() => {
     const init: Record<string, number> = {};
     for (const t of tracks) {
       if (t.bpm && t.bpm > 0) {
@@ -548,34 +549,95 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
     }
     return init;
   });
+  // 初期化（useRef に関数渡しは使えないので別途）
+  if (Object.keys(targetBpmsRef.current).length === 0) {
+    for (const t of tracks) {
+      if (t.bpm && t.bpm > 0) {
+        targetBpmsRef.current[t.id] = Math.round((t.bpm * (t.speed ?? 1)) * 10) / 10;
+      }
+    }
+  }
 
-  // 長押し用 ref
-  const holdRef = useRef<{ timeout: ReturnType<typeof setTimeout> | null; interval: ReturnType<typeof setInterval> | null }>({ timeout: null, interval: null });
-  // 現在のBPM値をrefでも持つ（setInterval内でstale closureにならないため）
-  const targetBpmsRef = useRef(targetBpms);
-  useEffect(() => { targetBpmsRef.current = targetBpms; }, [targetBpms]);
+  // DOM refs — 各トラックの表示要素を直接更新
+  const domRefs = useRef<Record<string, {
+    bpmText: HTMLElement | null;
+    diffBadge: HTMLElement | null;
+    speedBadge: HTMLElement | null;
+    bar: HTMLElement | null;
+    slider: HTMLInputElement | null;
+    card: HTMLElement | null;
+    resetBtn: HTMLElement | null;
+  }>>({});
 
-  // stale closure なし — 毎回 store と ref から直接取得
+  // store 書き込み debounce（audio は即時、store は 200ms 後）
+  const storeTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const commitToStore = useCallback((trackId: string, newSpeed: number) => {
+    if (storeTimerRef.current[trackId]) clearTimeout(storeTimerRef.current[trackId]);
+    storeTimerRef.current[trackId] = setTimeout(() => {
+      updateTrack(trackId, { speed: newSpeed });
+    }, 200);
+  }, [updateTrack]);
+
+  // DOM 直接更新（再レンダリングなし）
+  const updateDom = useCallback((trackId: string, clamped: number) => {
+    const track = useGROOVA.getState().tracks.find((t) => t.id === trackId);
+    if (!track?.bpm) return;
+    const originalBpm = track.bpm;
+    const isChanged = Math.abs(clamped - originalBpm) > 0.05;
+    const speedRatio = clamped / originalBpm;
+    const diffFromMaster = Math.round((clamped - masterBpm) * 10) / 10;
+    const diffColor = Math.abs(diffFromMaster) < 1 ? "#a8ff3e" : Math.abs(diffFromMaster) < 5 ? "#ffcc44" : "#ff6b44";
+    const refs = domRefs.current[trackId];
+    if (!refs) return;
+
+    if (refs.bpmText) {
+      refs.bpmText.textContent = clamped.toFixed(1);
+      refs.bpmText.style.background = isChanged
+        ? "linear-gradient(135deg, #a8ff3e, #00f5ff)"
+        : "linear-gradient(135deg, #8888aa, #6666aa)";
+    }
+    if (refs.diffBadge) {
+      refs.diffBadge.textContent = `${diffFromMaster >= 0 ? "+" : ""}${diffFromMaster} vs master`;
+      refs.diffBadge.style.color = diffColor;
+      refs.diffBadge.style.borderColor = `${diffColor}44`;
+      refs.diffBadge.style.background = `${diffColor}18`;
+    }
+    if (refs.speedBadge) refs.speedBadge.textContent = `${speedRatio.toFixed(3)}×`;
+    if (refs.bar) {
+      refs.bar.style.width = `${((clamped - 40) / (300 - 40)) * 100}%`;
+      refs.bar.style.background = isChanged ? "linear-gradient(90deg, #a8ff3e, #00f5ff)" : "#3a3a4a";
+    }
+    if (refs.slider) refs.slider.value = String(clamped);
+    if (refs.card) refs.card.style.borderColor = isChanged ? "#a8ff3e33" : "#2a2a3a";
+    if (refs.resetBtn) refs.resetBtn.style.display = isChanged ? "block" : "none";
+  }, [masterBpm]);
+
   const applyBpm = useCallback((trackId: string, newTargetBpm: number) => {
     const track = useGROOVA.getState().tracks.find((t) => t.id === trackId);
-    if (!track || !track.bpm || track.bpm === 0) return;
+    if (!track?.bpm) return;
     const clamped = Math.min(300, Math.max(40, Math.round(newTargetBpm * 10) / 10));
     const newSpeed = clamped / track.bpm;
-    targetBpmsRef.current = { ...targetBpmsRef.current, [trackId]: clamped };
-    setTargetBpms((prev) => ({ ...prev, [trackId]: clamped }));
-    updateTrack(trackId, { speed: newSpeed });
+    targetBpmsRef.current[trackId] = clamped;
+    // 音声は即時
     audioEngine.updateSpeed(trackId, newSpeed);
-  }, [updateTrack]);
+    // store は debounce
+    commitToStore(trackId, newSpeed);
+    // DOM は即時
+    updateDom(trackId, clamped);
+  }, [commitToStore, updateDom]);
 
   const handleReset = useCallback((trackId: string) => {
     const track = useGROOVA.getState().tracks.find((t) => t.id === trackId);
-    if (!track || !track.bpm || track.bpm === 0) return;
+    if (!track?.bpm) return;
     const original = Math.round(track.bpm * 10) / 10;
-    targetBpmsRef.current = { ...targetBpmsRef.current, [trackId]: original };
-    setTargetBpms((prev) => ({ ...prev, [trackId]: original }));
-    updateTrack(trackId, { speed: 1 });
+    targetBpmsRef.current[trackId] = original;
     audioEngine.updateSpeed(trackId, 1);
-  }, [updateTrack]);
+    commitToStore(trackId, 1);
+    updateDom(trackId, original);
+  }, [commitToStore, updateDom]);
+
+  const holdRef = useRef<{ timeout: ReturnType<typeof setTimeout> | null; interval: ReturnType<typeof setInterval> | null }>({ timeout: null, interval: null });
 
   const stopHold = useCallback(() => {
     if (holdRef.current.timeout) { clearTimeout(holdRef.current.timeout); holdRef.current.timeout = null; }
@@ -587,14 +649,13 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
     // 即時1回
     const cur0 = targetBpmsRef.current[trackId];
     if (cur0 !== undefined) applyBpm(trackId, cur0 + delta);
-    // 350ms後に連続開始
+    // 300ms後に連続 — 間隔 80ms
     holdRef.current.timeout = setTimeout(() => {
       holdRef.current.interval = setInterval(() => {
-        // ref から最新値を取得 → stale closure なし
         const cur = targetBpmsRef.current[trackId];
         if (cur !== undefined) applyBpm(trackId, cur + delta);
-      }, 60);
-    }, 350);
+      }, 80);
+    }, 300);
   }, [applyBpm, stopHold]);
 
   const audioTracks = tracks.filter((t) => t.audioBuffer && t.bpm && t.bpm > 0);
@@ -603,17 +664,32 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
     label, trackId, delta,
   }: { label: string; trackId: string; delta: number }) => (
     <button
-      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); startHold(trackId, delta); }}
-      onPointerUp={stopHold}
-      onPointerLeave={stopHold}
-      onPointerCancel={stopHold}
-      style={{
-        flex: 1, padding: "8px 0", borderRadius: 8,
-        background: "#1e1e2e", border: "1px solid #2e2e44",
-        color: "#c0c0d8", fontFamily: "JetBrains Mono", fontSize: 13, fontWeight: 700,
-        cursor: "pointer", userSelect: "none", WebkitUserSelect: "none",
+      onPointerDown={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = "#2a2a40";
+        e.currentTarget.setPointerCapture(e.pointerId);
+        startHold(trackId, delta);
       }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#2a2a40"; }}
+      onPointerUp={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = "#1e1e2e";
+        stopHold();
+      }}
+      onPointerLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = "#1e1e2e";
+        stopHold();
+      }}
+      onPointerCancel={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = "#1e1e2e";
+        stopHold();
+      }}
+      style={{
+        flex: 1, padding: "12px 0", borderRadius: 8,
+        background: "#1e1e2e", border: "1px solid #2e2e44",
+        color: "#c0c0d8", fontFamily: "JetBrains Mono", fontSize: 15, fontWeight: 700,
+        cursor: "pointer", userSelect: "none", WebkitUserSelect: "none",
+        touchAction: "manipulation",
+        WebkitTapHighlightColor: "transparent",
+        minHeight: 48,
+      }}
     >
       {label}
     </button>
@@ -661,18 +737,24 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
           {tracks.map((track, i) => {
             if (!track.audioBuffer || !track.bpm || track.bpm === 0) return null;
             const originalBpm = track.bpm;
-            const currentTarget = targetBpms[track.id] ?? Math.round(originalBpm * 10) / 10;
-            const isChanged = Math.abs(currentTarget - originalBpm) > 0.05;
-            const speedRatio = currentTarget / originalBpm;
-            const diffFromMaster = Math.round((currentTarget - masterBpm) * 10) / 10;
-            const diffColor = Math.abs(diffFromMaster) < 1 ? "#a8ff3e" : Math.abs(diffFromMaster) < 5 ? "#ffcc44" : "#ff6b44";
+            const initTarget = targetBpmsRef.current[track.id] ?? Math.round(originalBpm * 10) / 10;
+            const initChanged = Math.abs(initTarget - originalBpm) > 0.05;
+            const initSpeedRatio = initTarget / originalBpm;
+            const initDiff = Math.round((initTarget - masterBpm) * 10) / 10;
+            const initDiffColor = Math.abs(initDiff) < 1 ? "#a8ff3e" : Math.abs(initDiff) < 5 ? "#ffcc44" : "#ff6b44";
+
+            // domRefs 初期化
+            if (!domRefs.current[track.id]) {
+              domRefs.current[track.id] = { bpmText: null, diffBadge: null, speedBadge: null, bar: null, slider: null, card: null, resetBtn: null };
+            }
 
             return (
               <div
                 key={track.id}
+                ref={(el) => { if (domRefs.current[track.id]) domRefs.current[track.id].card = el; }}
                 style={{
                   padding: "14px", borderRadius: 14,
-                  background: "#1a1a28", border: `1px solid ${isChanged ? "#a8ff3e33" : "#2a2a3a"}`,
+                  background: "#1a1a28", border: `1px solid ${initChanged ? "#a8ff3e33" : "#2a2a3a"}`,
                 }}
               >
                 {/* トラック名行 */}
@@ -699,14 +781,16 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
                 {/* ── 現在BPM 大表示 ── */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 12 }}>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{
-                      fontFamily: "JetBrains Mono, monospace", fontSize: 42, fontWeight: 700, lineHeight: 1,
-                      background: isChanged
-                        ? "linear-gradient(135deg, #a8ff3e, #00f5ff)"
-                        : "linear-gradient(135deg, #8888aa, #6666aa)",
-                      WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-                    }}>
-                      {currentTarget.toFixed(1)}
+                    <div
+                      ref={(el) => { if (domRefs.current[track.id]) domRefs.current[track.id].bpmText = el; }}
+                      style={{
+                        fontFamily: "JetBrains Mono, monospace", fontSize: 42, fontWeight: 700, lineHeight: 1,
+                        background: initChanged
+                          ? "linear-gradient(135deg, #a8ff3e, #00f5ff)"
+                          : "linear-gradient(135deg, #8888aa, #6666aa)",
+                        WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                      }}>
+                      {initTarget.toFixed(1)}
                     </div>
                     <div style={{ fontFamily: "Space Grotesk", fontSize: 10, color: "#44445a", marginTop: 2 }}>
                       BPM
@@ -714,21 +798,25 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
                   </div>
                   {/* バッジ列 */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <div style={{
-                      padding: "3px 8px", borderRadius: 6,
-                      background: `${diffColor}18`, border: `1px solid ${diffColor}44`,
-                      fontSize: 10, fontFamily: "JetBrains Mono", fontWeight: 700, color: diffColor,
-                      textAlign: "center",
-                    }}>
-                      {diffFromMaster >= 0 ? `+${diffFromMaster}` : `${diffFromMaster}`} vs master
+                    <div
+                      ref={(el) => { if (domRefs.current[track.id]) domRefs.current[track.id].diffBadge = el; }}
+                      style={{
+                        padding: "3px 8px", borderRadius: 6,
+                        background: `${initDiffColor}18`, border: `1px solid ${initDiffColor}44`,
+                        fontSize: 10, fontFamily: "JetBrains Mono", fontWeight: 700, color: initDiffColor,
+                        textAlign: "center",
+                      }}>
+                      {initDiff >= 0 ? `+${initDiff}` : `${initDiff}`} vs master
                     </div>
-                    <div style={{
-                      padding: "3px 8px", borderRadius: 6,
-                      background: "#2a2a3a",
-                      fontSize: 10, fontFamily: "JetBrains Mono", fontWeight: 700,
-                      color: "#6666aa", textAlign: "center",
-                    }}>
-                      {speedRatio.toFixed(3)}×
+                    <div
+                      ref={(el) => { if (domRefs.current[track.id]) domRefs.current[track.id].speedBadge = el; }}
+                      style={{
+                        padding: "3px 8px", borderRadius: 6,
+                        background: "#2a2a3a",
+                        fontSize: 10, fontFamily: "JetBrains Mono", fontWeight: 700,
+                        color: "#6666aa", textAlign: "center",
+                      }}>
+                      {initSpeedRatio.toFixed(3)}×
                     </div>
                   </div>
                 </div>
@@ -748,17 +836,20 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
                     height: 3, borderRadius: 999, background: "#2a2a3a",
                     transform: "translateY(-50%)", pointerEvents: "none",
                   }} />
-                  <div style={{
-                    position: "absolute", top: "50%", left: 0,
-                    height: 3, borderRadius: 999,
-                    background: isChanged ? "linear-gradient(90deg, #a8ff3e, #00f5ff)" : "#3a3a4a",
-                    transform: "translateY(-50%)",
-                    width: `${((currentTarget - 40) / (300 - 40)) * 100}%`,
-                    pointerEvents: "none",
-                  }} />
+                  <div
+                    ref={(el) => { if (domRefs.current[track.id]) domRefs.current[track.id].bar = el; }}
+                    style={{
+                      position: "absolute", top: "50%", left: 0,
+                      height: 3, borderRadius: 999,
+                      background: initChanged ? "linear-gradient(90deg, #a8ff3e, #00f5ff)" : "#3a3a4a",
+                      transform: "translateY(-50%)",
+                      width: `${((initTarget - 40) / (300 - 40)) * 100}%`,
+                      pointerEvents: "none",
+                    }} />
                   <input
+                    ref={(el) => { if (domRefs.current[track.id]) domRefs.current[track.id].slider = el; }}
                     type="range" min={40} max={300} step={0.5}
-                    value={currentTarget}
+                    defaultValue={initTarget}
                     onChange={(e) => applyBpm(track.id, parseFloat(e.target.value))}
                     style={{
                       width: "100%", height: 24,
@@ -778,31 +869,33 @@ function BpmInfoSheet({ tracks, masterBpm }: { tracks: import("../lib/store").Tr
                   ].map(({ bpm, label }) => (
                     <button
                       key={label}
-                      onClick={() => applyBpm(track.id, Math.round(bpm * 10) / 10)}
+                      onPointerDown={(e) => { e.preventDefault(); applyBpm(track.id, Math.round(bpm * 10) / 10); }}
                       style={{
-                        background: "none", border: "none", padding: "2px 4px",
-                        color: Math.abs(currentTarget - bpm) < 0.5 ? "#a8ff3e" : "#444466",
+                        background: "none", border: "none", padding: "6px 4px",
+                        color: "#444466",
                         fontSize: 9, fontFamily: "Space Grotesk", fontWeight: 600, cursor: "pointer",
+                        touchAction: "manipulation", minHeight: 36,
                       }}
                     >
                       {label}<br />
                       <span style={{ fontFamily: "JetBrains Mono", fontSize: 9 }}>{bpm.toFixed(0)}</span>
                     </button>
                   ))}
-                  {isChanged && (
-                    <button
-                      onClick={() => handleReset(track.id)}
-                      style={{
-                        padding: "3px 10px", borderRadius: 6,
-                        background: "#2a1a1a", border: "1px solid #ff6b4433",
-                        color: "#ff6b44", fontSize: 10,
-                        fontFamily: "Space Grotesk", fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      リセット
-                    </button>
-                  )}
+                  <button
+                    ref={(el) => { if (domRefs.current[track.id]) domRefs.current[track.id].resetBtn = el; }}
+                    onPointerDown={(e) => { e.preventDefault(); handleReset(track.id); }}
+                    style={{
+                      padding: "3px 10px", borderRadius: 6,
+                      background: "#2a1a1a", border: "1px solid #ff6b4433",
+                      color: "#ff6b44", fontSize: 10,
+                      fontFamily: "Space Grotesk", fontWeight: 600,
+                      cursor: "pointer",
+                      display: initChanged ? "block" : "none",
+                      touchAction: "manipulation",
+                    }}
+                  >
+                    リセット
+                  </button>
                 </div>
               </div>
             );
