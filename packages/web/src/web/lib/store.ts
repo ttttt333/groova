@@ -19,6 +19,7 @@ export type TrackState = {
   muted: boolean;
   solo: boolean;
   isAnalyzing: boolean;
+  rowId: string; // 同じ rowId のクリップは同じ行に表示
 };
 
 export type SFXClip = {
@@ -39,6 +40,12 @@ export type Marker = {
 
 export type EditTool = "move" | "split" | "trim" | "fade";
 
+// Undo/Redo スナップショット
+type Snapshot = {
+  tracks: TrackState[];
+  trackOffsets: Record<string, number>;
+};
+
 export type GROOVAState = {
   masterBpm: number;
   isPlaying: boolean;
@@ -56,6 +63,9 @@ export type GROOVAState = {
   scrollResetCounter: number;
   trackOffsets: Record<string, number>;
   editTool: EditTool;
+  // Undo/Redo
+  undoStack: Snapshot[];
+  redoStack: Snapshot[];
 
   // Actions
   setMasterBpm: (bpm: number) => void;
@@ -81,6 +91,10 @@ export type GROOVAState = {
   syncAllToBpm: () => void;
   setEditTool: (t: EditTool) => void;
   splitTrackAtPlayhead: (trackId: string, playheadSec?: number) => void;
+  // Undo/Redo
+  pushHistory: () => void;
+  undo: () => void;
+  redo: () => void;
 };
 
 const TRACK_COLORS = [
@@ -114,8 +128,11 @@ function makeTrack(idx: number): TrackState {
     muted: false,
     solo: false,
     isAnalyzing: false,
+    rowId: `row-${idx}`,
   };
 }
+
+const MAX_HISTORY = 30;
 
 export const useGROOVA = create<GROOVAState>((set, get) => ({
   masterBpm: 120,
@@ -134,14 +151,59 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
   scrollResetCounter: 0,
   trackOffsets: {},
   editTool: "move",
+  undoStack: [],
+  redoStack: [],
+
+  // ── Undo/Redo ──
+  pushHistory: () => {
+    const { tracks, trackOffsets, undoStack } = get();
+    const snap: Snapshot = {
+      tracks: tracks.map((t) => ({ ...t })),
+      trackOffsets: { ...trackOffsets },
+    };
+    set({
+      undoStack: [...undoStack.slice(-MAX_HISTORY + 1), snap],
+      redoStack: [],
+    });
+  },
+
+  undo: () => {
+    const { undoStack, redoStack, tracks, trackOffsets } = get();
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    const current: Snapshot = {
+      tracks: tracks.map((t) => ({ ...t })),
+      trackOffsets: { ...trackOffsets },
+    };
+    set({
+      tracks: prev.tracks,
+      trackOffsets: prev.trackOffsets,
+      undoStack: undoStack.slice(0, -1),
+      redoStack: [...redoStack, current],
+    });
+  },
+
+  redo: () => {
+    const { redoStack, undoStack, tracks, trackOffsets } = get();
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    const current: Snapshot = {
+      tracks: tracks.map((t) => ({ ...t })),
+      trackOffsets: { ...trackOffsets },
+    };
+    set({
+      tracks: next.tracks,
+      trackOffsets: next.trackOffsets,
+      redoStack: redoStack.slice(0, -1),
+      undoStack: [...undoStack, current],
+    });
+  },
 
   setTrackOffset: (id, offsetSec) =>
     set((s) => ({ trackOffsets: { ...s.trackOffsets, [id]: offsetSec } })),
 
   setMasterBpm: (bpm) => {
     const clamped = Math.min(240, Math.max(40, bpm));
-    // masterBpm だけ更新 — tracks は触らない（beatPositions の大量コピーを防ぐ）
-    // speed は audioEngine.play() 時に masterBpm / track.bpm でリアルタイム計算する
     set({ masterBpm: clamped });
   },
   setIsPlaying: (v) => set({ isPlaying: v }),
@@ -155,8 +217,9 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
 
   addTrack: () => {
     trackCounter++;
+    const idx = trackCounter;
     set((s) => ({
-      tracks: s.tracks.length < 6 ? [...s.tracks, makeTrack(trackCounter)] : s.tracks,
+      tracks: s.tracks.length < 12 ? [...s.tracks, makeTrack(idx)] : s.tracks,
     }));
   },
 
@@ -212,46 +275,44 @@ export const useGROOVA = create<GROOVAState>((set, get) => ({
     const track = state.tracks.find((t) => t.id === trackId);
     if (!track?.audioBuffer) return;
 
-    // プレイヘッド位置（引数 > store の順で優先）
+    // 履歴を保存してから分割
+    state.pushHistory();
+
     const phSec = playheadSec ?? state.playheadTime;
     const origOffset = state.trackOffsets[trackId] ?? 0;
     const trimStart = track.trimStart ?? 0;
     const duration = track.audioBuffer.duration;
     const trimEnd = track.trimEnd ?? duration;
 
-    // クリップ内の位置に変換
     const clipEnd = origOffset + (trimEnd - trimStart);
-    if (phSec <= origOffset + 0.1 || phSec >= clipEnd - 0.1) return;
+    if (phSec <= origOffset + 0.05 || phSec >= clipEnd - 0.05) return;
 
-    const elapsed = phSec - origOffset; // クリップ先頭からの経過時間
-    const splitAt = trimStart + elapsed;       // バッファ内の分割位置
+    const elapsed = phSec - origOffset;
+    const splitAt = trimStart + elapsed;
 
-    // 前半: 既存トラックを trimEnd を splitAt に
+    // 前半: trimEnd を縮める
     state.updateTrack(trackId, { trimEnd: splitAt, fadeOut: 0 });
 
-    // 後半: 新規トラック追加
-    state.addTrack();
-    const newTracks = get().tracks;
-    const newTrack = newTracks[newTracks.length - 1];
-    if (newTrack) {
-      state.updateTrack(newTrack.id, {
-        name: track.name + " [2]",
-        file: track.file,
-        audioBuffer: track.audioBuffer,
-        bpm: track.bpm,
-        bpmConfidence: track.bpmConfidence,
-        waveformData: track.waveformData,
-        beatPositions: track.beatPositions,
-        color: track.color,
-        trimStart: splitAt,
-        trimEnd: track.trimEnd ?? duration,
-        fadeIn: 0,
-        fadeOut: track.fadeOut ?? 0,
-        speed: track.speed,
-        volume: track.volume,
-      });
-      const newOffset = origOffset + elapsed;
-      set((s) => ({ trackOffsets: { ...s.trackOffsets, [newTrack.id]: newOffset } }));
-    }
+    // 後半: 新規クリップを同じ rowId で追加
+    trackCounter++;
+    const newId = `track-${trackCounter}`;
+    const newOffset = origOffset + elapsed;
+
+    set((s) => ({
+      tracks: [
+        ...s.tracks,
+        {
+          ...track,
+          id: newId,
+          name: track.name,
+          trimStart: splitAt,
+          trimEnd: track.trimEnd ?? duration,
+          fadeIn: 0,
+          fadeOut: track.fadeOut ?? 0,
+          rowId: track.rowId, // 同じ行に配置
+        },
+      ],
+      trackOffsets: { ...s.trackOffsets, [newId]: newOffset },
+    }));
   },
 }));

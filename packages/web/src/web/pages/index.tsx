@@ -37,6 +37,7 @@ export default function GROOVAApp() {
     isPlaying, setIsPlaying, masterBpm, zoomLevel, setZoom,
     setPlayheadTime, tracks, showGrid, setShowGrid,
     syncAllToBpm, resetScroll, editTool, setEditTool, splitTrackAtPlayhead,
+    undo, redo, undoStack, redoStack,
   } = useGROOVA();
 
   // playheadTime は store から subscribe しない — DOM直接更新で60fps再レンダリングを回避
@@ -197,7 +198,11 @@ export default function GROOVAApp() {
 
       {/* ── Timeline ── */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <Timeline onSplitClick={() => toggleSheet("split")} />
+        <Timeline
+          onSplitAtPlayhead={(phSec) => {
+            tracks.filter((t) => t.audioBuffer).forEach((t) => splitTrackAtPlayhead(t.id, phSec));
+          }}
+        />
       </div>
 
       {/* ── Transport bar ── */}
@@ -257,6 +262,32 @@ export default function GROOVAApp() {
           >
             0:00.0
           </span>
+
+          {/* Undo / Redo */}
+          <button
+            onClick={undo}
+            disabled={undoStack.length === 0}
+            title="元に戻す"
+            style={{
+              width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
+              background: "#1a1a24", border: "1px solid #2a2a3a",
+              color: undoStack.length > 0 ? "#9999aa" : "#2a2a3a",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: undoStack.length > 0 ? "pointer" : "default", fontSize: 14,
+            }}
+          >↩</button>
+          <button
+            onClick={redo}
+            disabled={redoStack.length === 0}
+            title="やり直す"
+            style={{
+              width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
+              background: "#1a1a24", border: "1px solid #2a2a3a",
+              color: redoStack.length > 0 ? "#9999aa" : "#2a2a3a",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: redoStack.length > 0 ? "pointer" : "default", fontSize: 14,
+            }}
+          >↪</button>
 
           {/* spacer */}
           <div style={{ flex: 1 }} />
@@ -415,6 +446,34 @@ export default function GROOVAApp() {
               >
                 <SkipBack size={16} />
               </button>
+
+              {/* Undo */}
+              <button
+                onClick={undo}
+                disabled={undoStack.length === 0}
+                title="元に戻す"
+                style={{
+                  width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
+                  background: "#1a1a24", border: "1px solid #2a2a3a",
+                  color: undoStack.length > 0 ? "#9999aa" : "#2a2a3a",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: undoStack.length > 0 ? "pointer" : "default", fontSize: 16,
+                }}
+              >↩</button>
+
+              {/* Redo */}
+              <button
+                onClick={redo}
+                disabled={redoStack.length === 0}
+                title="やり直す"
+                style={{
+                  width: btnH, height: btnH, borderRadius: btnR, flexShrink: 0,
+                  background: "#1a1a24", border: "1px solid #2a2a3a",
+                  color: redoStack.length > 0 ? "#9999aa" : "#2a2a3a",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: redoStack.length > 0 ? "pointer" : "default", fontSize: 16,
+                }}
+              >↪</button>
 
               {/* ▶/⏸ 再生トグル */}
               <button

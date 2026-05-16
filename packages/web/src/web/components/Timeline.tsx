@@ -65,13 +65,13 @@ function formatTime(sec: number) {
   return `${m}:${String(s).padStart(2, "0")}.${ms}`;
 }
 
-export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }) {
+export default function Timeline({ onSplitAtPlayhead }: { onSplitAtPlayhead?: (playheadSec: number) => void }) {
   const {
     tracks, updateTrack, masterBpm, showGrid,
     setPlayheadTime, isPlaying, zoomLevel, addTrack, setMasterBpm,
     scrollResetCounter, removeTrack,
     trackOffsets: storeTrackOffsets, setTrackOffset,
-    editTool, setEditTool,
+    editTool, setEditTool, splitTrackAtPlayhead,
   } = useGROOVA();
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -122,12 +122,31 @@ export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }
 
   const topAudioTrack = tracks.find((t) => t.audioBuffer && t.beatPositions?.length > 0) ?? null;
 
+  // rowId でグループ化 — 表示行の順序を決定
+  // 同じ rowId を持つトラックは同じ行に描画する（分割後のクリップなど）
+  const rows: TrackState[][] = [];
+  const rowOrder: string[] = []; // rowId の出現順
+  for (const t of tracks) {
+    const rid = t.rowId ?? t.id;
+    const idx = rowOrder.indexOf(rid);
+    if (idx === -1) {
+      rowOrder.push(rid);
+      rows.push([t]);
+    } else {
+      rows[idx].push(t);
+    }
+  }
+  // 各行の「代表トラック」(rowの先頭 = 最初に分割された前半)
+  const rowRepresentatives = rows.map((r) => r[0]);
+
   const maxDuration = Math.max(
     30,
     ...tracks.map((t) => {
       const dur = t.audioBuffer?.duration || 0;
+      const trimStart = t.trimStart ?? 0;
+      const trimEnd = t.trimEnd ?? dur;
       const off = trackOffsets[t.id] || 0;
-      return off + dur;
+      return off + (trimEnd - trimStart);
     })
   );
   const canvasWidth = Math.max(maxDuration * pxPerSec + 200, 600);
@@ -434,6 +453,270 @@ export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }
     return false;
   }, []);
 
+  // ── drawRowTracks: 同じ行の全クリップを1つのCanvasに描画 ──
+  const drawRowTracks = useCallback((rowTracks: TrackState[]) => {
+    if (rowTracks.length === 0) return;
+    // Canvasは代表トラック(先頭)のIDで管理
+    const rep = rowTracks[0];
+    const canvas = canvasRefs.current.get(rep.rowId ?? rep.id) ?? canvasRefs.current.get(rep.id);
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const W = canvas.width;
+    const H = canvas.height;
+    // 背景クリア
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#0d0d14";
+    ctx.fillRect(0, 0, W, H);
+
+    // 各クリップを順番に描画（drawTrack は独自にclearするので、ここでは内部描画のみ呼ぶ）
+    let hasAnalyzing = false;
+    for (const t of rowTracks) {
+      if (drawTrackOnCtx(ctx, t, W, H)) hasAnalyzing = true;
+    }
+
+    // 空行ガイド（全クリップが空の場合）
+    if (rowTracks.every((t) => !t.audioBuffer)) {
+      ctx.strokeStyle = "#2a2a3a";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(2, 2, W - 4, H - 4);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#2a2a3a";
+      ctx.font = "11px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("タップして追加", W / 2, H / 2 + 4);
+      ctx.textAlign = "left";
+    }
+
+    if (hasAnalyzing) {
+      const scanX = ((Date.now() % 2000) / 2000) * W;
+      const grad = ctx.createLinearGradient(scanX - 40, 0, scanX + 40, 0);
+      grad.addColorStop(0, "rgba(0,245,255,0)");
+      grad.addColorStop(0.5, "rgba(0,245,255,0.7)");
+      grad.addColorStop(1, "rgba(0,245,255,0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(scanX - 40, 0, 80, H);
+    }
+  }, []);
+
+  // ── drawTrackOnCtx: ctx を受け取って1クリップ分描画（clearしない） ──
+  // drawTrack と同じロジックだが ctx / W / H を外から受け取る
+  const drawTrackOnCtx = useCallback((ctx: CanvasRenderingContext2D, track: TrackState, W: number, H: number): boolean => {
+    const pxPerSec = pxPerSecRef.current;
+    const trackOffsets = trackOffsetsRef.current;
+
+    const offset = trackOffsets[track.id] || 0;
+    const waveform = track.waveformData;
+    const duration = track.audioBuffer?.duration || 0;
+    if (!waveform || duration <= 0) return false;
+
+    const clipX = offset * pxPerSec;
+    const trimStart = track.trimStart ?? 0;
+    const trimEnd = track.trimEnd ?? duration;
+    const clipW = (trimEnd - trimStart) * pxPerSec;
+    const trimStartX = clipX;
+    const trimEndX = clipX + clipW;
+
+    // クリップ背景
+    ctx.fillStyle = track.color + "18";
+    ctx.beginPath();
+    ctx.roundRect(trimStartX, 2, clipW, H - 4, 4);
+    ctx.fill();
+    ctx.strokeStyle = track.color + "66";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(trimStartX, 2, clipW, H - 4, 4);
+    ctx.stroke();
+
+    // 波形
+    const fullClipW = duration * pxPerSec;
+    const samplesPerPx = waveform.length / fullClipW;
+    const trimStartPx = trimStart * pxPerSec;
+
+    if (samplesPerPx > 1) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(trimStartX, 0, clipW, H);
+      ctx.clip();
+      ctx.beginPath();
+      const midY = H / 2;
+      const ampScale = (H - 8) * 0.42;
+      for (let px = 0; px < clipW; px++) {
+        const srcPx = trimStartPx + px;
+        const sStart = Math.floor(srcPx * samplesPerPx);
+        const sEnd = Math.min(Math.ceil((srcPx + 1) * samplesPerPx), waveform.length);
+        let max = 0;
+        for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
+        const y = midY - max * ampScale;
+        if (px === 0) ctx.moveTo(trimStartX + px, y); else ctx.lineTo(trimStartX + px, y);
+      }
+      for (let px = Math.floor(clipW) - 1; px >= 0; px--) {
+        const srcPx = trimStartPx + px;
+        const sStart = Math.floor(srcPx * samplesPerPx);
+        const sEnd = Math.min(Math.ceil((srcPx + 1) * samplesPerPx), waveform.length);
+        let max = 0;
+        for (let s = sStart; s < sEnd; s++) { if (waveform[s] > max) max = waveform[s]; }
+        ctx.lineTo(trimStartX + px, midY + max * ampScale);
+      }
+      ctx.closePath();
+      ctx.fillStyle = track.color + "bb";
+      ctx.fill();
+      ctx.strokeStyle = track.color;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      const pxPerSample = fullClipW / waveform.length;
+      const barW = Math.max(1, pxPerSample - (pxPerSample > 3 ? 1 : 0));
+      const midY = H / 2;
+      const ampScale = (H - 8) * 0.42;
+      const visStartSample = Math.max(0, Math.floor(trimStart * (waveform.length / duration)) - 2);
+      const visEndSample = Math.min(waveform.length, Math.ceil(trimEnd * (waveform.length / duration)) + 2);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(trimStartX, 0, clipW, H);
+      ctx.clip();
+      ctx.fillStyle = track.color + "dd";
+      for (let i = visStartSample; i < visEndSample; i++) {
+        const amp = waveform[i];
+        const barH = amp * ampScale * 2;
+        const x = clipX + i * pxPerSample;
+        ctx.fillRect(x, midY - barH / 2, barW, barH);
+      }
+      ctx.restore();
+    }
+
+    // トラック名・BPM
+    ctx.fillStyle = track.color + "99";
+    ctx.font = "bold 9px Space Grotesk, sans-serif";
+    ctx.fillText(track.name, trimStartX + 6, H - 6);
+    if (track.bpm) {
+      ctx.fillStyle = track.color;
+      ctx.font = "bold 9px JetBrains Mono, monospace";
+      ctx.fillText(`${track.bpm}`, trimStartX + 6, 14);
+    }
+
+    // フェードイン
+    const fadeIn = track.fadeIn ?? 0;
+    if (fadeIn > 0) {
+      const fadeInPx = Math.min(fadeIn * pxPerSec, clipW);
+      const grad = ctx.createLinearGradient(trimStartX, 0, trimStartX + fadeInPx, 0);
+      grad.addColorStop(0, "#0d0d14ee");
+      grad.addColorStop(1, "rgba(13,13,20,0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.rect(trimStartX, 2, fadeInPx, H - 4);
+      ctx.fill();
+      ctx.strokeStyle = track.color + "88";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(trimStartX, H - 4);
+      ctx.lineTo(trimStartX + fadeInPx, 2);
+      ctx.stroke();
+      ctx.fillStyle = track.color;
+      ctx.beginPath();
+      ctx.moveTo(trimStartX, 2);
+      ctx.lineTo(trimStartX + 14, 2);
+      ctx.lineTo(trimStartX, 16);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillStyle = track.color + "55";
+      ctx.beginPath();
+      ctx.moveTo(trimStartX, 2);
+      ctx.lineTo(trimStartX + 10, 2);
+      ctx.lineTo(trimStartX, 12);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // フェードアウト
+    const fadeOut = track.fadeOut ?? 0;
+    if (fadeOut > 0) {
+      const fadeOutPx = Math.min(fadeOut * pxPerSec, clipW);
+      const grad = ctx.createLinearGradient(trimEndX - fadeOutPx, 0, trimEndX, 0);
+      grad.addColorStop(0, "rgba(13,13,20,0)");
+      grad.addColorStop(1, "#0d0d14ee");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.rect(trimEndX - fadeOutPx, 2, fadeOutPx, H - 4);
+      ctx.fill();
+      ctx.strokeStyle = track.color + "88";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(trimEndX - fadeOutPx, 2);
+      ctx.lineTo(trimEndX, H - 4);
+      ctx.stroke();
+      ctx.fillStyle = track.color;
+      ctx.beginPath();
+      ctx.moveTo(trimEndX, 2);
+      ctx.lineTo(trimEndX - 14, 2);
+      ctx.lineTo(trimEndX, 16);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillStyle = track.color + "55";
+      ctx.beginPath();
+      ctx.moveTo(trimEndX, 2);
+      ctx.lineTo(trimEndX - 10, 2);
+      ctx.lineTo(trimEndX, 12);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // リサイズハンドル
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(trimStartX - 1, 0, 2, H);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(trimEndX - 1, 0, 2, H);
+    ctx.fillStyle = track.color + "cc";
+    for (let i = 0; i < 3; i++) {
+      ctx.fillRect(trimEndX - 8 + i * 3, H / 2 - 8, 1.5, 16);
+    }
+    for (let i = 0; i < 3; i++) {
+      ctx.fillRect(trimStartX + 2 + i * 3, H / 2 - 8, 1.5, 16);
+    }
+
+    // BPMグリッド
+    if (showGridRef.current && masterBpmRef.current > 0) {
+      const bpm = masterBpmRef.current;
+      const beatPx = (60 / bpm) * pxPerSec;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(trimStartX, 0, clipW, H);
+      ctx.clip();
+      const firstBeat = Math.floor(clipX / beatPx) * beatPx;
+      let x = firstBeat;
+      while (x <= trimEndX + 1) {
+        if (x >= trimStartX - 1) {
+          const beatIndex = Math.round(x / beatPx);
+          const isBar8 = beatIndex % 8 === 0;
+          const isBar4 = beatIndex % 4 === 0;
+          if (isBar8) {
+            ctx.strokeStyle = "rgba(168,255,62,0.45)";
+            ctx.lineWidth = 1.5;
+          } else if (isBar4) {
+            ctx.strokeStyle = "rgba(168,255,62,0.18)";
+            ctx.lineWidth = 1;
+          } else {
+            ctx.strokeStyle = "rgba(168,255,62,0.06)";
+            ctx.lineWidth = 0.8;
+          }
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+        }
+        x += beatPx;
+      }
+      ctx.restore();
+    }
+
+    return track.isAnalyzing ?? false;
+  }, []);
+
   // ── drawRuler ──
   const drawRuler = useCallback((canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext("2d");
@@ -502,7 +785,15 @@ export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }
       if (hasAnalyzing) needsWaveRedraw.current = true;
 
       if (needsWaveRedraw.current) {
-        tracksRef.current.forEach((t) => drawTrack(t));
+        // rowId グループごとにまとめて描画
+        const allTracks = tracksRef.current;
+        const rowMap = new Map<string, TrackState[]>();
+        for (const t of allTracks) {
+          const rid = t.rowId ?? t.id;
+          if (!rowMap.has(rid)) rowMap.set(rid, []);
+          rowMap.get(rid)!.push(t);
+        }
+        rowMap.forEach((rowTracks) => drawRowTracks(rowTracks));
         needsWaveRedraw.current = false;
       }
       if (needsRulerRedraw.current) {
@@ -612,6 +903,29 @@ export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }
     if (zone === "trim-left" || zone === "trim-right") return "col-resize";
     if (zone === "fade-in" || zone === "fade-out") return "ew-resize";
     return "grab";
+  }, []);
+
+  // ── hitTestRow: rowの全クリップからポインター位置に一番近いクリップIDを返す ──
+  const hitTestRow = useCallback((e: React.PointerEvent | React.DragEvent, rowTracks: TrackState[]): string | null => {
+    const rowKey = rowTracks[0]?.rowId ?? rowTracks[0]?.id;
+    const canvas = rowKey ? canvasRefs.current.get(rowKey) : null;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = (e as React.PointerEvent).clientX ?? (e as React.DragEvent).clientX;
+    const canvasX = clientX - rect.left + (scrollRef.current?.scrollLeft || 0);
+    const pxPerSec = pxPerSecRef.current;
+
+    for (const t of rowTracks) {
+      if (!t.audioBuffer) continue;
+      const offset = trackOffsetsRef.current[t.id] || 0;
+      const trimStart = t.trimStart ?? 0;
+      const trimEnd = t.trimEnd ?? t.audioBuffer.duration;
+      const clipX = offset * pxPerSec;
+      const clipEndX = clipX + (trimEnd - trimStart) * pxPerSec;
+      if (canvasX >= clipX - 16 && canvasX <= clipEndX + 16) return t.id;
+    }
+    // フォールバック: 音声ありの先頭クリップ
+    return rowTracks.find((t) => t.audioBuffer)?.id ?? rowTracks[0]?.id ?? null;
   }, []);
 
   // ── Track PointerDown ──
@@ -887,15 +1201,21 @@ export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }
             ))}
           </div>
           <div style={{ flex: 1, overflowY: "hidden" }}>
-            {tracks.map((track) => (
+            {/* rowId ごとに1行だけラベルを表示 */}
+            {rowRepresentatives.map((track) => (
               <TrackLabel
-                key={track.id}
+                key={track.rowId ?? track.id}
                 track={track}
-                onDelete={() => handleDeleteTrack(track.id)}
+                onDelete={() => {
+                  // 同じ rowId のクリップを全削除
+                  const rid = track.rowId ?? track.id;
+                  const same = useGROOVA.getState().tracks.filter((t) => (t.rowId ?? t.id) === rid);
+                  same.forEach((t) => handleDeleteTrack(t.id));
+                }}
                 onFileSelect={(file) => loadFile(file, track.id)}
               />
             ))}
-            {tracks.length < 6 && (
+            {rows.length < 6 && (
               <div style={{
                 height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24",
                 display: "flex", alignItems: "center", justifyContent: "center",
@@ -940,23 +1260,37 @@ export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }
               />
             </div>
 
-            {/* Tracks */}
-            {tracks.map((track) => (
-              <TrackCanvas
-                key={track.id}
-                track={track}
-                editTool={editTool}
-                canvasWidth={canvasWidth}
-                canvasRefs={canvasRefs}
-                onPointerDown={(e) => handleTrackPointerDown(e, track.id)}
-                onPointerMove={(e) => { handleTrackPointerMove(e); handleTrackPointerHover(e, track.id); }}
-                onPointerUp={handleTrackPointerUp}
-                onDrop={(e) => handleFileDrop(e, track.id)}
-                onFileSelect={(file) => loadFile(file, track.id)}
-              />
-            ))}
+            {/* Tracks — rowId ごとに1行のCanvas。同行の全クリップを描画 */}
+            {rows.map((rowTracks) => {
+              const rep = rowTracks[0];
+              const rowKey = rep.rowId ?? rep.id;
+              return (
+                <TrackCanvas
+                  key={rowKey}
+                  track={rep}
+                  editTool={editTool}
+                  canvasWidth={canvasWidth}
+                  canvasRefs={canvasRefs}
+                  onPointerDown={(e) => {
+                    const hitId = hitTestRow(e, rowTracks);
+                    handleTrackPointerDown(e, hitId ?? rep.id);
+                  }}
+                  onPointerMove={(e) => {
+                    handleTrackPointerMove(e);
+                    const hitId = hitTestRow(e, rowTracks);
+                    handleTrackPointerHover(e, hitId ?? rep.id);
+                  }}
+                  onPointerUp={handleTrackPointerUp}
+                  onDrop={(e) => {
+                    const hitId = hitTestRow(e, rowTracks);
+                    handleFileDrop(e, hitId ?? rep.id);
+                  }}
+                  onFileSelect={(file) => loadFile(file, rep.id)}
+                />
+              );
+            })}
 
-            {tracks.length < 6 && (
+            {rows.length < 6 && (
               <div style={{ height: TRACK_HEIGHT, borderTop: "1px solid #1a1a24", background: "#080810" }} />
             )}
 
@@ -972,9 +1306,9 @@ export default function Timeline({ onSplitClick }: { onSplitClick?: () => void }
               }}
             >
               {/* Filmoraスタイル: ハサミ丸ボタン */}
-              {onSplitClick && (
+              {onSplitAtPlayhead && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); onSplitClick(); }}
+                  onClick={(e) => { e.stopPropagation(); onSplitAtPlayhead(playheadTimeRef.current); }}
                   onPointerDown={(e) => e.stopPropagation()}
                   style={{
                     position: "absolute",
@@ -1099,8 +1433,9 @@ function TrackCanvas({ track, editTool, canvasWidth, canvasRefs, onPointerDown, 
       <canvas
         ref={(el) => {
           if (el) {
-            const isNew = !canvasRefs.current.get(track.id);
-            canvasRefs.current.set(track.id, el);
+            const key = track.rowId ?? track.id;
+            const isNew = !canvasRefs.current.get(key);
+            canvasRefs.current.set(key, el);
             if (isNew) { el.width = canvasWidth; el.height = TRACK_HEIGHT; }
           }
         }}
